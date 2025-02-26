@@ -2,21 +2,21 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 import os
 import pandas as pd
 import requests
 from tqdm import tqdm
-import logging
 import shutil
 import sys
+import json
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Import the centralized logging system
+from .. import logger
+from ..logger import get_logger, LoggerAdapter
+
+# Get package-specific logger
+base_logger = get_logger('loaders.base')
 
 class BaseDataset(ABC):
     """Abstract base class for all neuroimaging datasets.
@@ -29,7 +29,8 @@ class BaseDataset(ABC):
         self, 
         dataset_id: str,
         data_dir: Optional[Union[str, Path]] = None,
-        version: str = "latest"
+        version: str = "latest",
+        is_derivative: Optional[bool] = None
     ):
         """Initialize a neuroimaging dataset.
         
@@ -37,11 +38,31 @@ class BaseDataset(ABC):
             dataset_id: The unique identifier for the dataset on OpenNeuro
             data_dir: Directory where data will be stored (default: ./data)
             version: Dataset version to use (default: "latest")
+            is_derivative: Explicitly specify if this is derivative data (preprocessed)
+                           If None, will attempt to auto-detect
         """
         self.dataset_id = dataset_id
         self.data_dir = Path(data_dir) if data_dir else Path("./data")
         self.version = version
         self.dataset_dir = self.data_dir / dataset_id
+        
+        # Create a logger adapter with dataset context
+        self.logger = LoggerAdapter(base_logger, {
+            'dataset_id': dataset_id,
+            'version': version
+        })
+        
+        # Set the derivative flag
+        self._is_derivative = is_derivative
+        
+        # If not explicitly set, auto-detect if this dataset contains derivatives
+        if self._is_derivative is None:
+            self._is_derivative = self._detect_derivative_data()
+            
+        if self._is_derivative:
+            self.logger.info("Dataset identified as derivative (preprocessed) data")
+        else:
+            self.logger.info("Dataset identified as raw data")
         
         # Create data directory if it doesn't exist
         os.makedirs(self.data_dir, exist_ok=True)
@@ -49,7 +70,53 @@ class BaseDataset(ABC):
         # Metadata dictionary
         self.metadata: Dict = {}
         
-        logger.info(f"Initialized {self.__class__.__name__} with ID: {dataset_id}")
+        self.logger.info(f"Initialized {self.__class__.__name__}")
+    
+    def _detect_derivative_data(self) -> bool:
+        """Detect if this dataset contains derivative (preprocessed) data.
+        
+        In BIDS format, derivatives are stored in a 'derivatives' folder.
+        There may also be a dataset_description.json file indicating preprocessing.
+        
+        Returns:
+            bool: True if dataset appears to be derivative data, False otherwise
+        """
+        # Check if the dataset directory exists
+        if not self.dataset_dir.exists():
+            self.logger.warning(f"Dataset directory {self.dataset_dir} does not exist yet")
+            return False
+            
+        # Check for common indicators of derivative data
+        
+        # 1. Check if this is a 'derivatives' directory itself
+        if "derivatives" in self.dataset_dir.parts:
+            return True
+            
+        # 2. Check for a derivatives directory within the dataset
+        derivatives_dir = self.dataset_dir / "derivatives"
+        if derivatives_dir.exists() and derivatives_dir.is_dir():
+            # If the only content is a derivatives directory, this is likely derivative data
+            non_bids_dirs = [d for d in self.dataset_dir.iterdir() 
+                             if d.is_dir() and d.name not in ('derivatives', '.git', '.datalad')]
+            if not non_bids_dirs:
+                return True
+        
+        # 3. Check dataset_description.json for derivative indicators
+        description_file = self.dataset_dir / "dataset_description.json"
+        if description_file.exists():
+            try:
+                with open(description_file, 'r') as f:
+                    description = json.load(f)
+                    
+                # Check for keys indicating derivatives
+                if description.get('GeneratedBy'):
+                    return True
+                if 'pipeline' in str(description).lower():
+                    return True
+            except Exception as e:
+                self.logger.warning(f"Failed to parse dataset_description.json: {str(e)}")
+                
+        return False
     
     def download_dataset(self, force: bool = False) -> bool:
         """Download the dataset from OpenNeuro using DataLad Python API.
@@ -66,47 +133,52 @@ class BaseDataset(ABC):
         if self.dataset_dir.exists() and not force:
             files_count = len(list(self.dataset_dir.rglob('*')))
             if files_count > 0:
-                logger.info(f"Dataset already exists with {files_count} files. Use force=True to re-download.")
+                self.logger.info(f"Dataset already exists with {files_count} files. Use force=True to re-download.")
                 return True
                 
         # Try importing datalad
         try:
             import datalad.api as dl
         except ImportError:
-            logger.error("DataLad is not installed. Please install it with: pip install datalad")
+            self.logger.error("DataLad is not installed. Please install it with: pip install datalad")
             return False
             
         # If force is True and directory exists, remove it
         if force and self.dataset_dir.exists():
-            logger.info(f"Removing existing dataset directory: {self.dataset_dir}")
+            self.logger.info(f"Removing existing dataset directory: {self.dataset_dir}")
             shutil.rmtree(self.dataset_dir)
             
         # Construct the GitHub URL for the OpenNeuro dataset
         github_url = f"https://github.com/OpenNeuroDatasets/{self.dataset_id}.git"
         
         try:
-            logger.info(f"Downloading dataset {self.dataset_id} using DataLad from {github_url}")
+            self.logger.info(f"Downloading dataset {self.dataset_id} using DataLad from {github_url}")
+            print(f"\nDownloading dataset {self.dataset_id} from OpenNeuro...")
             
-            # Install the dataset using datalad
+            # Basic install without any special configuration
             dl.install(source=github_url, path=str(self.dataset_dir))
             
             # If version is specified and not "latest", check it out
             if self.version != "latest":
-                logger.info(f"Checking out version: {self.version}")
+                self.logger.info(f"Checking out version: {self.version}")
                 import subprocess
                 subprocess.run(["git", "-C", str(self.dataset_dir), "checkout", self.version], 
                               check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
             # Get the dataset content
             ds = dl.Dataset(str(self.dataset_dir))
-            logger.info(f"Downloading dataset content")
-            ds.get(".")
+            self.logger.info(f"Downloading dataset content")
+            print("\nDownloading dataset content (this may take some time)...")
             
-            logger.info(f"Successfully downloaded dataset {self.dataset_id}")
+            # Get the dataset content with git-annex showing progress
+            ds.get(".")
+                
+            self.logger.info(f"Successfully downloaded dataset {self.dataset_id}")
+            print(f"\nDataset download complete.")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to download dataset: {str(e)}")
+            self.logger.error(f"Failed to download dataset: {str(e)}")
             return False
     
     @abstractmethod
@@ -142,11 +214,11 @@ class BaseDataset(ABC):
             bool: True if download was successful
         """
         if target_path.exists():
-            logger.info(f"File already exists: {target_path}")
+            self.logger.info(f"File already exists: {target_path}")
             return True
             
         try:
-            logger.info(f"Downloading from {url} to {target_path}")
+            self.logger.info(f"Downloading from {url} to {target_path}")
             response = requests.get(url, stream=True)
             response.raise_for_status()
             
@@ -169,11 +241,11 @@ class BaseDataset(ABC):
                             f.write(chunk)
                             pbar.update(len(chunk))
             
-            logger.info(f"Successfully downloaded {target_path}")
+            self.logger.info(f"Successfully downloaded {target_path}")
             return True
             
         except Exception as e:
-            logger.error(f"Download failed: {str(e)}")
+            self.logger.error(f"Download failed: {str(e)}")
             if target_path.exists():
                 target_path.unlink()  # Remove partial file
             return False
@@ -185,7 +257,7 @@ class BaseDataset(ABC):
             bool: True if the dataset structure is valid
         """
         if not self.dataset_dir.exists():
-            logger.error(f"Dataset directory does not exist: {self.dataset_dir}")
+            self.logger.error(f"Dataset directory does not exist: {self.dataset_dir}")
             return False
             
         # Check for minimal required files/directories
@@ -204,4 +276,28 @@ class BaseDataset(ABC):
             "data_dir": str(self.dataset_dir),
             "dataset_type": self.__class__.__name__,
             "metadata": self.metadata
-        } 
+        }
+
+    def get_metadata(self) -> Dict[str, Any]:
+        """Get metadata for the dataset.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of dataset metadata
+        """
+        raise NotImplementedError("Subclasses must implement get_metadata method")
+
+    def get_modalities(self) -> List[str]:
+        """Get a list of imaging modalities in the dataset.
+        
+        Returns:
+            List[str]: List of modalities (e.g., ["T1w", "bold", "eeg"])
+        """
+        raise NotImplementedError("Subclasses must implement get_modalities method")
+
+    def __str__(self) -> str:
+        """String representation of the dataset.
+        
+        Returns:
+            str: String representation
+        """
+        return f"{self.__class__.__name__}(dataset_id={self.dataset_id}, version={self.version})" 

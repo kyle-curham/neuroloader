@@ -11,8 +11,8 @@ import numpy as np
 import logging
 from urllib.parse import urljoin
 
-from .base import BaseDataset
-from .utils import find_files_by_extension, load_json_file, parse_bids_filename
+from .base_loader import BaseDataset
+from ..utils import find_files_by_extension, load_json_file, parse_bids_filename
 
 logger = logging.getLogger(__name__)
 
@@ -249,50 +249,38 @@ class FMRIDataset(MRIDataset):
             
             # Ensure required columns exist
             if 'onset' not in events_df.columns:
-                logger.error(f"Events file missing required 'onset' column: {events_file}")
+                logger.warning(f"Events file {events_file} missing required 'onset' column")
                 return pd.DataFrame()
-            
-            # Add duration column if missing
-            if 'duration' not in events_df.columns:
-                events_df['duration'] = 0.0
-                logger.warning(f"Added default duration column to events")
-            
-            # Add trial_type column if missing
-            if 'trial_type' not in events_df.columns and 'event_type' in events_df.columns:
-                events_df['trial_type'] = events_df['event_type']
-            elif 'trial_type' not in events_df.columns and 'condition' in events_df.columns:
-                events_df['trial_type'] = events_df['condition']
-            elif 'trial_type' not in events_df.columns:
-                logger.warning(f"No trial_type column found in events file, using index as trial_type")
-                events_df['trial_type'] = [f"event_{i}" for i in range(len(events_df))]
-            
-            logger.info(f"Loaded {len(events_df)} events from {events_file}")
+                
+            logger.info(f"Loaded events from {events_file} with {len(events_df)} events")
             return events_df
             
         except Exception as e:
             logger.error(f"Failed to load events file: {str(e)}")
             return pd.DataFrame()
-    
+            
     def get_task_information(self, task_name: str) -> Optional[Dict]:
-        """Get task information for a specific task.
+        """Get information about a specific task from the dataset.
         
         Args:
-            task_name: Name of the task
+            task_name: Name of the task to get information for
             
         Returns:
             Optional[Dict]: Dictionary with task information or None if not found
         """
-        # Look for task JSON file
-        task_json_files = list(self.dataset_dir.rglob(f"*task-{task_name}*_bold.json"))
+        # Try to find task JSON file (*_task-<task_name>_*.json)
+        task_files = list(self.dataset_dir.rglob(f"*task-{task_name}*.json"))
         
-        if not task_json_files:
-            logger.warning(f"No task information file found for task {task_name}")
+        if not task_files:
+            logger.warning(f"No task information found for task '{task_name}'")
             return None
+            
+        # Use the first found task file
+        task_file = task_files[0]
         
         try:
-            # Use the first task JSON file found
-            task_info = load_json_file(task_json_files[0])
-            logger.info(f"Loaded task information from {task_json_files[0]}")
+            task_info = load_json_file(task_file)
+            logger.info(f"Loaded task information from {task_file}")
             return task_info
             
         except Exception as e:

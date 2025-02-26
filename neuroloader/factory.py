@@ -7,10 +7,10 @@ dataset handler based on the contents of a neuroimaging dataset.
 from pathlib import Path
 from typing import Union, Optional, List
 
-from .multimodal import MultimodalDataset
-from .mri import MRIDataset, FMRIDataset
-from .eeg import EEGDataset
-from .base import BaseDataset
+from .loaders.multimodal_loader import MultimodalDataset
+from .loaders.mri_loader import MRIDataset, FMRIDataset
+from .loaders.eeg_loader import EEGDataset
+from .loaders.base_loader import BaseDataset
 import logging
 
 logger = logging.getLogger(__name__)

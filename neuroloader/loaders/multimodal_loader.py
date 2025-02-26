@@ -9,10 +9,10 @@ import pandas as pd
 import logging
 from urllib.parse import urljoin
 
-from .base import BaseDataset
-from .eeg import EEGDataset
-from .mri import MRIDataset, FMRIDataset
-from .utils import find_files_by_extension, load_json_file, parse_bids_filename
+from .base_loader import BaseDataset
+from .eeg_loader import EEGDataset
+from .mri_loader import MRIDataset, FMRIDataset
+from ..utils import find_files_by_extension, load_json_file, parse_bids_filename
 
 logger = logging.getLogger(__name__)
 
@@ -249,50 +249,45 @@ class MultimodalDataset:
                 for file_path in files:
                     parts = parse_bids_filename(file_path.name)
                     
-                    # Skip files without task information
-                    if 'task' not in parts:
-                        continue
-                    
-                    task_name = parts['task']
-                    run_id = parts.get('run', '1')  # Default to run-1 if not specified
-                    
-                    # Create a unique run identifier
-                    run_key = f"sub-{subject_id}_task-{task_name}_run-{run_id}"
-                    
-                    # Add to run_info dictionary
-                    if run_key not in run_info:
-                        run_info[run_key] = {"eeg": [], "mri": [], "fmri": []}
-                    
-                    run_info[run_key][modality].append(file_path)
+                    # If this file has task and run information
+                    if 'task' in parts:
+                        task_name = parts['task']
+                        run_id = parts.get('run', '1')  # Default to run-1 if not specified
+                        
+                        # Create a unique key for this task-run combination
+                        run_key = f"{subject_id}_{task_name}_{run_id}"
+                        
+                        # Add to run_info
+                        if run_key not in run_info:
+                            run_info[run_key] = {"eeg": [], "mri": [], "fmri": []}
+                            
+                        run_info[run_key][modality].append(file_path)
             
-            # Add non-empty runs to the matching_runs dictionary
+            # Add to matching runs if there are multimodal recordings
             for run_key, modality_files in run_info.items():
-                # Only include runs that have files in at least two modalities
-                modalities_present = sum(1 for files in modality_files.values() if files)
-                if modalities_present >= 2:
+                # Count modalities with files
+                modality_count = sum(1 for files in modality_files.values() if files)
+                
+                # If this run has data from multiple modalities
+                if modality_count > 1:
                     matching_runs[run_key] = modality_files
         
+        logger.info(f"Found {len(matching_runs)} multimodal recording runs")
         return matching_runs
     
     def describe(self) -> Dict:
-        """Get a description of the multimodal dataset.
+        """Get a description of the dataset.
         
         Returns:
             Dict: Dictionary containing dataset metadata
         """
-        # Ensure modalities are detected
-        if self.is_downloaded and not any(self.available_modalities.values()):
-            self._detect_modalities()
-        
-        # Get subject count
-        subject_ids = self.get_subject_ids() if self.is_downloaded else []
-        
         return {
             "dataset_id": self.dataset_id,
             "version": self.version,
             "data_dir": str(self.data_dir / self.dataset_id),
-            "is_downloaded": self.is_downloaded,
-            "available_modalities": {k: v for k, v in self.available_modalities.items() if v},
-            "subject_count": len(subject_ids),
-            "subjects": subject_ids
+            "modalities": {
+                modality: available 
+                for modality, available in self.available_modalities.items()
+            },
+            "subject_count": len(self.get_subject_ids()) if self.is_downloaded else None
         } 

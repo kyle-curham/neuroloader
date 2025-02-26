@@ -11,8 +11,8 @@ import mne
 from mne.io import read_raw_eeglab, read_raw_brainvision
 from urllib.parse import urljoin
 
-from .base import BaseDataset
-from .utils import find_files_by_extension, load_json_file, parse_bids_filename
+from .base_loader import BaseDataset
+from ..utils import find_files_by_extension, load_json_file, parse_bids_filename
 
 logger = logging.getLogger(__name__)
 

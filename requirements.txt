@@ -1,19 +1,35 @@
 # Core dependencies
 numpy>=1.20.0
 pandas>=1.3.0
+scipy>=1.7.0
+matplotlib>=3.4.0
+scikit-learn>=1.0.0
 requests>=2.25.0
-tqdm>=4.60.0
+tqdm>=4.61.0
 pathlib>=1.0.1
 datalad>=0.18.0    # For downloading datasets from OpenNeuro via Python API
 
 # Neuroimaging libraries
-nibabel>=3.2.0  # For MRI/fMRI data
-mne>=1.0.0      # For EEG/MEG data
+nibabel>=3.2.0  # For handling neuroimaging file formats
+nilearn>=0.8.0  # High-level interface for neuroimaging analysis
+mne>=1.0.0     # For EEG/MEG data analysis
+mne_connectivity>=0.4.0  # Connectivity analysis for MNE data
 
-# Optional dependencies
-matplotlib>=3.4.0    # For visualization
-scikit-learn>=1.0.0  # For machine learning
-nilearn>=0.8.0       # Higher-level neuroimaging tools 
+# Optional but recommended dependencies
+scikit-image>=0.18.0  # For image processing
+statsmodels>=0.12.0   # For statistical models
+seaborn>=0.11.0       # For statistical visualization
+
+# Advanced neuroimaging (optional)
+# Uncomment as needed
+SimpleITK>=2.1.0    # For medical image processing
+antspyx>=0.3.0      # For registration and segmentation
+nipype>=1.7.0       # For neuroimaging pipelines
+
+# Deep learning (optional)
+# Uncomment as needed
+# torch>=1.9.0        # PyTorch for deep learning
+# tensorflow>=2.5.0   # TensorFlow for deep learning
 
 # External dependencies (installed separately)
 # git-annex - Required by DataLad for file content management
