@@ -16,6 +16,20 @@ A Python package for downloading, processing, and analyzing neuroimaging data fr
 
 ## Installation
 
+### Simple Installation
+
+```bash
+# Install directly from GitHub
+pip install git+https://github.com/kyle-curham/neuroloader.git
+
+# Install DataLad (required for downloading datasets)
+pip install datalad
+```
+
+### Development Installation
+
+If you're planning to modify the code or contribute to the project:
+
 ```bash
 # Clone the repository
 git clone https://github.com/kyle-curham/neuroloader.git
