@@ -1,0 +1,25 @@
+# Core dependencies
+numpy>=1.20.0
+pandas>=1.3.0
+requests>=2.25.0
+tqdm>=4.60.0
+pathlib>=1.0.1
+datalad>=0.18.0    # For downloading datasets from OpenNeuro via Python API
+
+# Neuroimaging libraries
+nibabel>=3.2.0  # For MRI/fMRI data
+mne>=1.0.0      # For EEG/MEG data
+
+# Optional dependencies
+matplotlib>=3.4.0    # For visualization
+scikit-learn>=1.0.0  # For machine learning
+nilearn>=0.8.0       # Higher-level neuroimaging tools 
+
+# External dependencies (installed separately)
+# git-annex - Required by DataLad for file content management
+#   Windows: https://git-annex.branchable.com/install/Windows/
+#   macOS: brew install git-annex
+#   Linux: apt-get install git-annex or equivalent for your distro 
+
+# Note: Make sure git-annex is properly installed and available in your PATH
+# DataLad relies on git-annex for actual data retrieval 

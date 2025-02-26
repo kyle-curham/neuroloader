@@ -1,0 +1,111 @@
+# .gitignore for neuroloader
+# 
+# This file specifies patterns that should be excluded from version control.
+# Neuroimaging data files are large binary files that should not be stored in git.
+# Instead, they are downloaded and managed via DataLad or directly from data sources.
+#
+# If you add new file types or directories that should be excluded, please update this file.
+# For more information, see the "Version Control and Data Management" section in the README.
+
+# Neuroimaging data folders
+data/
+downloads/
+raw_data/
+processed_data/
+derivatives/
+bids_data/
+
+# Neuroimaging file formats
+*.nii
+*.nii.gz
+*.edf
+*.bdf
+*.set
+*.fif
+*.vhdr
+*.vmrk
+*.eeg
+*.mri
+*.img
+*.hdr
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.env
+.venv
+env.bak/
+venv.bak/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Logs
+*.log
+logs/
+
+# DataLad specific
+.git/annex/
+.git/datalad/
+.datalad/
+.git-annex/
+
+# Configuration files with potential secrets
+config.ini
+secrets.json
+credentials.json
+.env 
