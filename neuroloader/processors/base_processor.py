@@ -3,16 +3,12 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-import logging
 
 from ..loaders.base_loader import BaseDataset
+from ..logger import get_logger
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Get logger for this module
+logger = get_logger("processors.base")
 
 class BaseProcessor(ABC):
     """Base class for neuroimaging preprocessing pipelines.

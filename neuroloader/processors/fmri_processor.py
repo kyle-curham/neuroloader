@@ -1,16 +1,19 @@
 """fMRI data preprocessing module"""
 
-import logging
-from typing import Dict, List, Optional, Any, Tuple, Union
-from pathlib import Path
 import os
 import numpy as np
+import nibabel as nib
+from typing import Dict, List, Optional, Any, Tuple, Union
+from pathlib import Path
 import pandas as pd
+import tempfile
 
 from ..loaders.mri_loader import FMRIDataset
 from .base_processor import BaseProcessor
+from ..logger import get_logger
 
-logger = logging.getLogger(__name__)
+# Get logger for this module
+logger = get_logger("processors.fmri")
 
 class FMRIProcessor(BaseProcessor):
     """Processor for fMRI data preprocessing.
@@ -32,7 +35,6 @@ class FMRIProcessor(BaseProcessor):
         # Try to import neuroimaging libraries
         self.libs = {}
         try:
-            import nibabel as nib
             self.libs["nibabel"] = nib
             logger.info("NiBabel successfully imported")
         except ImportError:
@@ -345,7 +347,6 @@ class FMRIProcessor(BaseProcessor):
                 from nipype.interfaces.fsl import MCFLIRT
                 
                 # Save the image to a temporary file
-                import tempfile
                 temp_dir = tempfile.mkdtemp()
                 nib = self.libs["nibabel"]
                 input_file = Path(temp_dir) / "input.nii.gz"
@@ -438,7 +439,6 @@ class FMRIProcessor(BaseProcessor):
                 from nipype.interfaces.fsl import SliceTimer
                 
                 # Save the image to a temporary file
-                import tempfile
                 temp_dir = tempfile.mkdtemp()
                 nib = self.libs["nibabel"]
                 input_file = Path(temp_dir) / "input.nii.gz"
@@ -582,7 +582,6 @@ class FMRIProcessor(BaseProcessor):
                 from nipype.interfaces.fsl import FLIRT
                 
                 # Save the image to a temporary file
-                import tempfile
                 temp_dir = tempfile.mkdtemp()
                 nib = self.libs["nibabel"]
                 input_file = Path(temp_dir) / "input.nii.gz"

@@ -129,62 +129,76 @@ def main():
     version = "1.0.0"        # Dataset version
     
     app_logger.info(f"Dataset ID: {dataset_id}, Version: {version}")
-    logger.log_step(app_logger, "Downloading and initializing EEG dataset")
     
-    # Use the factory function to get the EEG dataset handler
-    # We can explicitly specify EEG type to avoid full download for detection
-    dataset = create_dataset(
-        dataset_id=dataset_id,
-        data_dir=str(data_dir),
-        version=version,
-        force_type="eeg"  # Explicitly specify this is an EEG dataset
-    )
-    
-    # Verify we got an EEG dataset handler
-    app_logger.info(f"Dataset type: {type(dataset).__name__}")
-    
-    # Download the dataset before exploring
-    logger.log_step(app_logger, "Downloading dataset")
-    app_logger.info("This may take some time...")
-    
+    # Use the factory function to get the appropriate dataset handler
+    # The create_dataset function will now detect modalities before downloading
+    logger.log_step(app_logger, "Detecting dataset modality")
     try:
-        # No special DataLad configuration - we'll keep it simple
-        print("\nStarting dataset download - this may take several minutes...")
-        print("DataLad will show its own progress indicators if available.")
+        dataset = create_dataset(
+            dataset_id=dataset_id,
+            data_dir=str(data_dir),
+            version=version
+        )
         
-        # Perform the download
-        download_success = dataset.download_dataset()
-        
-        if not download_success:
-            app_logger.error("Failed to download dataset. Please check your internet connection and try again.")
-            return
-        
-        app_logger.info("Dataset successfully downloaded.")
-        
-        # Verify dataset structure exists
-        dataset_dir = Path(data_dir) / dataset_id
-        if not dataset_dir.exists():
-            app_logger.error(f"Expected dataset directory not found: {dataset_dir}")
-            return
-            
-        # List some files to verify download
-        app_logger.info("Verifying dataset structure:")
-        try:
-            for item in list(dataset_dir.iterdir())[:10]:  # List up to 10 items
-                app_logger.info(f"  {item.relative_to(dataset_dir)}")
-        except Exception as e:
-            logger.log_exception(app_logger, e, "Error listing dataset contents")
-    
-    except Exception as e:
-        logger.log_exception(app_logger, e, "Error during dataset download")
+        # Verify we got the correct dataset handler
+        app_logger.info(f"Dataset type: {type(dataset).__name__}")
+    except ValueError as e:
+        app_logger.error(f"Failed to detect modalities: {str(e)}")
+        print(f"\nERROR: {str(e)}")
+        print("You can force a specific dataset type by using force_type parameter:")
+        print("  dataset = create_dataset(dataset_id, data_dir, force_type='eeg')")
         return
     
-    # Explore the dataset with EEG-specific methods
-    explore_eeg_dataset(dataset)
+    # Download the dataset if needed
+    logger.log_step(app_logger, "Downloading dataset if needed")
+    app_logger.info("This may take some time...")
+    
+    # Verify dataset structure exists
+    dataset_dir = Path(data_dir) / dataset_id
+    if not dataset_dir.exists() or len(list(dataset_dir.glob("*"))) == 0:
+        try:
+            print("\nStarting dataset download - this may take several minutes...")
+            print("DataLad will show its own progress indicators if available.")
+            
+            # Perform the download
+            download_success = dataset.download_dataset()
+            
+            if not download_success:
+                app_logger.error("Failed to download dataset. Please check your internet connection and try again.")
+                return
+            
+            app_logger.info("Dataset successfully downloaded.")
+            
+        except Exception as e:
+            logger.log_exception(app_logger, e, "Error during dataset download")
+            return
+    else:
+        app_logger.info("Dataset already downloaded. Skipping download step.")
+    
+    # Verify dataset structure
+    dataset_dir = Path(data_dir) / dataset_id
+    if not dataset_dir.exists():
+        app_logger.error(f"Expected dataset directory not found: {dataset_dir}")
+        return
+        
+    # List some files to verify download
+    app_logger.info("Verifying dataset structure:")
+    try:
+        for item in list(dataset_dir.iterdir())[:10]:  # List up to 10 items
+            app_logger.info(f"  {item.relative_to(dataset_dir)}")
+    except Exception as e:
+        logger.log_exception(app_logger, e, "Error listing dataset contents")
+    
+    # Ensure we're working with the correct dataset type for EEG-specific exploration
+    if isinstance(dataset, EEGDataset):
+        # Explore the dataset with EEG-specific methods
+        explore_eeg_dataset(dataset)
+    else:
+        app_logger.warning(f"Expected EEG dataset but got {type(dataset).__name__}. Cannot run EEG-specific exploration.")
     
     logger.log_step(app_logger, "Example Complete")
     app_logger.info(f"Dataset is now available in the {data_dir.absolute()} directory")
-    app_logger.info("You can explore it further using EEGDataset methods")
+    app_logger.info("You can explore it further using the dataset methods")
 
 if __name__ == "__main__":
     main() 

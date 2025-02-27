@@ -6,14 +6,16 @@ import re
 import requests
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
-import logging
 import hashlib
 from tqdm import tqdm
 import pandas as pd
 import numpy as np
 
-# Set up logging
-logger = logging.getLogger(__name__)
+# Import the package's logger
+from . import logger
+
+# Use the package's centralized logger
+utils_logger = logger.get_logger('utils')
 
 def download_file(url: str, target_path: Union[str, Path], 
                  chunk_size: int = 8192, force: bool = False) -> bool:
@@ -31,14 +33,14 @@ def download_file(url: str, target_path: Union[str, Path],
     target_path = Path(target_path)
     
     if target_path.exists() and not force:
-        logger.info(f"File already exists: {target_path}")
+        utils_logger.info(f"File already exists: {target_path}")
         return True
     
     try:
         # Ensure the directory exists
         os.makedirs(target_path.parent, exist_ok=True)
         
-        logger.info(f"Downloading from {url} to {target_path}")
+        utils_logger.info(f"Downloading from {url} to {target_path}")
         response = requests.get(url, stream=True)
         response.raise_for_status()
         
@@ -58,11 +60,11 @@ def download_file(url: str, target_path: Union[str, Path],
                         f.write(chunk)
                         pbar.update(len(chunk))
         
-        logger.info(f"Successfully downloaded {target_path}")
+        utils_logger.info(f"Successfully downloaded {target_path}")
         return True
         
     except Exception as e:
-        logger.error(f"Download failed: {str(e)}")
+        utils_logger.error(f"Download failed: {str(e)}")
         if target_path.exists():
             target_path.unlink()  # Remove partial file
         return False
@@ -81,18 +83,18 @@ def validate_dataset(dataset_path: Union[str, Path],
     dataset_path = Path(dataset_path)
     
     if not dataset_path.exists():
-        logger.error(f"Dataset path does not exist: {dataset_path}")
+        utils_logger.error(f"Dataset path does not exist: {dataset_path}")
         return False
     
     if not dataset_path.is_dir():
-        logger.error(f"Dataset path is not a directory: {dataset_path}")
+        utils_logger.error(f"Dataset path is not a directory: {dataset_path}")
         return False
     
     if required_files:
         for file_path in required_files:
             full_path = dataset_path / file_path
             if not full_path.exists():
-                logger.error(f"Required file missing: {full_path}")
+                utils_logger.error(f"Required file missing: {full_path}")
                 return False
     
     return True

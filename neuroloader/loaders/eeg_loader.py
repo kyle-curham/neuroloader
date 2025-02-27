@@ -6,15 +6,16 @@ import requests
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
 import pandas as pd
-import logging
 import mne
 from mne.io import read_raw_eeglab, read_raw_brainvision
 from urllib.parse import urljoin
 
 from .base_loader import BaseDataset
 from ..utils import find_files_by_extension, load_json_file, parse_bids_filename
+from .. import logger
 
-logger = logging.getLogger(__name__)
+# Use the package's centralized logger
+eeg_logger = logger.get_logger('loaders.eeg')
 
 class EEGDataset(BaseDataset):
     """Class for handling EEG datasets from OpenNeuro.
@@ -59,6 +60,11 @@ class EEGDataset(BaseDataset):
         Returns:
             List[Path]: List of paths to EEG files
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            eeg_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         return find_files_by_extension(self.dataset_dir, self.eeg_extensions)
     
     def get_electrode_locations(self, recording_file: Union[str, Path]) -> Optional[pd.DataFrame]:
@@ -70,10 +76,15 @@ class EEGDataset(BaseDataset):
         Returns:
             Optional[pd.DataFrame]: DataFrame with electrode locations or None if not found
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            eeg_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return None
+            
         recording_file = Path(recording_file)
         
         if not recording_file.exists():
-            logger.error(f"Recording file does not exist: {recording_file}")
+            eeg_logger.error(f"Recording file does not exist: {recording_file}")
             return None
         
         # Try to find electrode file in the same directory
@@ -90,7 +101,7 @@ class EEGDataset(BaseDataset):
                 electrode_files.extend(list(recording_dir.parent.glob(pattern)))
         
         if not electrode_files:
-            logger.warning(f"No electrode location file found for {recording_file}")
+            eeg_logger.warning(f"No electrode location file found for {recording_file}")
             return None
         
         # Use the first found electrode file
@@ -103,11 +114,11 @@ class EEGDataset(BaseDataset):
             elif electrode_file.suffix == '.txt':
                 return pd.read_csv(electrode_file, sep='\s+')
             else:
-                logger.warning(f"Unsupported electrode file format: {electrode_file}")
+                eeg_logger.warning(f"Unsupported electrode file format: {electrode_file}")
                 return None
                 
         except Exception as e:
-            logger.error(f"Failed to load electrode file: {str(e)}")
+            eeg_logger.error(f"Failed to load electrode file: {str(e)}")
             return None
     
     def get_events_dataframe(self, recording_file: Union[str, Path]) -> pd.DataFrame:
@@ -119,10 +130,15 @@ class EEGDataset(BaseDataset):
         Returns:
             pd.DataFrame: DataFrame with events information
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            eeg_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return pd.DataFrame()
+            
         recording_file = Path(recording_file)
         
         if not recording_file.exists():
-            logger.error(f"Recording file does not exist: {recording_file}")
+            eeg_logger.error(f"Recording file does not exist: {recording_file}")
             return pd.DataFrame()
         
         # Try to find events file in the same directory
@@ -138,21 +154,21 @@ class EEGDataset(BaseDataset):
             try:
                 if events_file.suffix == '.tsv':
                     events_df = pd.read_csv(events_file, sep='\t')
-                    logger.info(f"Loaded events from {events_file}")
+                    eeg_logger.info(f"Loaded events from {events_file}")
                     return events_df
                 elif events_file.suffix == '.json':
                     events_dict = load_json_file(events_file)
                     # Convert JSON to DataFrame (format depends on JSON structure)
                     events_df = pd.DataFrame(events_dict)
-                    logger.info(f"Loaded events from {events_file}")
+                    eeg_logger.info(f"Loaded events from {events_file}")
                     return events_df
             except Exception as e:
-                logger.warning(f"Failed to load events file {events_file}: {str(e)}")
+                eeg_logger.warning(f"Failed to load events file {events_file}: {str(e)}")
                 # Fall back to extracting from the recording file
         
         # If no events file found or loading failed, try to extract from recording
         try:
-            logger.info(f"Extracting events from recording file {recording_file}")
+            eeg_logger.info(f"Extracting events from recording file {recording_file}")
             
             # Determine file format and load with appropriate MNE function
             if recording_file.suffix == '.set':
@@ -162,7 +178,7 @@ class EEGDataset(BaseDataset):
             elif recording_file.suffix in ['.edf', '.bdf']:
                 raw = mne.io.read_raw(recording_file, preload=False)
             else:
-                logger.error(f"Unsupported file format: {recording_file.suffix}")
+                eeg_logger.error(f"Unsupported file format: {recording_file.suffix}")
                 return pd.DataFrame()
             
             # Extract events
@@ -177,11 +193,11 @@ class EEGDataset(BaseDataset):
                               for e in events[:, 2]]
             })
             
-            logger.info(f"Extracted {len(events_df)} events from recording")
+            eeg_logger.info(f"Extracted {len(events_df)} events from recording")
             return events_df
             
         except Exception as e:
-            logger.error(f"Failed to extract events from recording: {str(e)}")
+            eeg_logger.error(f"Failed to extract events from recording: {str(e)}")
             return pd.DataFrame()
     
     def load_recording(self, recording_file: Union[str, Path], preload: bool = False) -> Optional[mne.io.Raw]:
@@ -194,14 +210,19 @@ class EEGDataset(BaseDataset):
         Returns:
             Optional[mne.io.Raw]: MNE Raw object or None if loading fails
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            eeg_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return None
+            
         recording_file = Path(recording_file)
         
         if not recording_file.exists():
-            logger.error(f"Recording file does not exist: {recording_file}")
+            eeg_logger.error(f"Recording file does not exist: {recording_file}")
             return None
         
         try:
-            logger.info(f"Loading recording from {recording_file}")
+            eeg_logger.info(f"Loading recording from {recording_file}")
             
             # Determine file format and load with appropriate MNE function
             if recording_file.suffix == '.set':
@@ -211,12 +232,12 @@ class EEGDataset(BaseDataset):
             elif recording_file.suffix in ['.edf', '.bdf']:
                 raw = mne.io.read_raw(recording_file, preload=preload)
             else:
-                logger.error(f"Unsupported file format: {recording_file.suffix}")
+                eeg_logger.error(f"Unsupported file format: {recording_file.suffix}")
                 return None
             
-            logger.info(f"Successfully loaded recording with {len(raw.ch_names)} channels")
+            eeg_logger.info(f"Successfully loaded recording with {len(raw.ch_names)} channels")
             return raw
             
         except Exception as e:
-            logger.error(f"Failed to load recording: {str(e)}")
+            eeg_logger.error(f"Failed to load recording: {str(e)}")
             return None 

@@ -6,26 +6,37 @@ import requests
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple, Set
 import pandas as pd
-import logging
 from urllib.parse import urljoin
 
 from .base_loader import BaseDataset
 from .eeg_loader import EEGDataset
 from .mri_loader import MRIDataset, FMRIDataset
 from ..utils import find_files_by_extension, load_json_file, parse_bids_filename
+from .. import logger
 
-logger = logging.getLogger(__name__)
+# Use the package's centralized logger
+multimodal_logger = logger.get_logger('loaders.multimodal')
 
-class MultimodalDataset:
+class MultimodalDataset(BaseDataset):
     """Class for handling multimodal neuroimaging datasets from OpenNeuro.
     
     This class coordinates multiple modality-specific handlers to work with
     datasets containing different types of neuroimaging data (e.g., MRI, fMRI, EEG).
+    
+    Modality detection is entirely handled by the factory (in factory.py) and passed
+    to this class as a required parameter. No modality detection happens within this class.
+    
+    Handlers for each modality are initialized directly during construction based on 
+    the detected modalities passed from the factory. This ensures efficient resource
+    usage as only the necessary handlers are created.
+    
+    Like other loaders, this class inherits the download functionality from BaseDataset.
     """
     
     def __init__(
         self, 
         dataset_id: str,
+        available_modalities: Dict[str, bool],
         data_dir: Optional[Union[str, Path]] = None,
         version: str = "latest"
     ):
@@ -33,112 +44,138 @@ class MultimodalDataset:
         
         Args:
             dataset_id: The unique identifier for the dataset on OpenNeuro
+            available_modalities: Dictionary of detected modalities
             data_dir: Directory where data will be stored (default: ./data)
             version: Dataset version to use (default: "latest")
         """
-        self.dataset_id = dataset_id
-        self.data_dir = Path(data_dir) if data_dir else Path("./data")
-        self.version = version
+        # Initialize the base dataset handler
+        super().__init__(dataset_id, data_dir, version)
         
-        # Initialize modality-specific handlers
-        self.eeg_handler = EEGDataset(dataset_id, data_dir, version)
-        self.mri_handler = MRIDataset(dataset_id, data_dir, version)
-        self.fmri_handler = FMRIDataset(dataset_id, data_dir, version)
+        # Store available modalities
+        self.available_modalities = available_modalities.copy()
+        multimodal_logger.info(f"Using modalities: {[m for m, v in self.available_modalities.items() if v]}")
         
-        # Flag to track if dataset is downloaded
-        self.is_downloaded = False
+        # Directly initialize handlers for available modalities
+        self.eeg_handler = EEGDataset(self.dataset_id, self.data_dir, self.version) if self.available_modalities["eeg"] else None
+        self.mri_handler = MRIDataset(self.dataset_id, self.data_dir, self.version) if self.available_modalities["mri"] else None
+        self.fmri_handler = FMRIDataset(self.dataset_id, self.data_dir, self.version) if self.available_modalities["fmri"] else None
         
-        # Metadata about available modalities
-        self.available_modalities = {
-            "eeg": False,
-            "mri": False,
-            "fmri": False
-        }
-        
-        logger.info(f"Initialized MultimodalDataset with ID: {dataset_id}")
+        multimodal_logger.info(f"Initialized MultimodalDataset with ID: {dataset_id}")
     
-    def download_dataset(self, force: bool = False) -> bool:
-        """Download the multimodal dataset from OpenNeuro.
+    def get_recording_files(self) -> List[Path]:
+        """Get all recording files across all available modalities in the dataset."""
+        all_files = []
         
-        This method uses one of the handlers to download the entire dataset
-        and then identifies which modalities are available.
-        
-        Args:
-            force: If True, re-download even if the data exists locally
-            
-        Returns:
-            bool: True if download was successful
-        """
-        # Use MRI handler to download the dataset (could use any handler)
-        success = self.mri_handler.download_dataset(force=force)
-        
-        if success:
-            self.is_downloaded = True
-            
-            # Detect available modalities
-            self._detect_modalities()
-            
-            logger.info(f"Successfully downloaded multimodal dataset {self.dataset_id}")
-            logger.info(f"Available modalities: {[m for m, available in self.available_modalities.items() if available]}")
-            
-        return success
-    
-    def _detect_modalities(self) -> None:
-        """Detect which modalities are available in the dataset."""
-        # Check for EEG files
-        eeg_files = self.eeg_handler.get_recording_files()
-        self.available_modalities["eeg"] = len(eeg_files) > 0
-        
-        # Check for structural MRI files
-        t1_scans = self.mri_handler.get_structural_scans("T1w")
-        t2_scans = self.mri_handler.get_structural_scans("T2w")
-        self.available_modalities["mri"] = len(t1_scans) > 0 or len(t2_scans) > 0
-        
-        # Check for functional MRI files
-        fmri_scans = self.fmri_handler.get_functional_scans()
-        self.available_modalities["fmri"] = len(fmri_scans) > 0
-    
-    def get_eeg_files(self) -> List[Path]:
-        """Get all EEG recording files in the dataset.
-        
-        Returns:
-            List[Path]: List of paths to EEG recording files
-        """
-        if not self.available_modalities["eeg"]:
-            logger.warning("EEG modality not available in this dataset")
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            multimodal_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
             return []
         
-        return self.eeg_handler.get_recording_files()
+        # Gather files from all available modalities
+        if self.available_modalities["eeg"] and self.eeg_handler:
+            all_files.extend(self.eeg_handler.get_recording_files())
+            
+        if self.available_modalities["mri"] and self.mri_handler:
+            all_files.extend(self.mri_handler.get_recording_files())
+            
+        if self.available_modalities["fmri"] and self.fmri_handler:
+            all_files.extend(self.fmri_handler.get_functional_scans())
+            
+        return all_files
     
-    def get_mri_files(self, scan_type: Optional[str] = None) -> List[Path]:
-        """Get MRI scan files in the dataset.
+    def get_structural_scans(self, scan_type: str = "T1w") -> List[Path]:
+        """Get all structural MRI scans of a specific type.
         
         Args:
-            scan_type: Optional filter for scan type (e.g., "T1w", "T2w")
+            scan_type: Type of structural scan to find (e.g., "T1w", "T2w")
             
         Returns:
-            List[Path]: List of paths to MRI files
+            List[Path]: List of paths to structural scan files
         """
-        if not self.available_modalities["mri"]:
-            logger.warning("MRI modality not available in this dataset")
+        if not self.available_modalities["mri"] or self.mri_handler is None:
+            multimodal_logger.warning("MRI modality not available in this dataset")
             return []
         
-        if scan_type:
-            return self.mri_handler.get_structural_scans(scan_type)
-        else:
-            return self.mri_handler.get_recording_files()
+        return self.mri_handler.get_structural_scans(scan_type)
     
-    def get_fmri_files(self) -> List[Path]:
-        """Get all fMRI recording files in the dataset.
+    def get_functional_scans(self) -> List[Path]:
+        """Get all functional MRI scans in the dataset.
         
         Returns:
-            List[Path]: List of paths to fMRI recording files
+            List[Path]: List of paths to functional scan files
         """
-        if not self.available_modalities["fmri"]:
-            logger.warning("fMRI modality not available in this dataset")
+        if not self.available_modalities["fmri"] or self.fmri_handler is None:
+            multimodal_logger.warning("fMRI modality not available in this dataset")
             return []
         
         return self.fmri_handler.get_functional_scans()
+    
+    def get_events_dataframe(self, recording_file: Union[str, Path]) -> pd.DataFrame:
+        """Get events for a recording file.
+        
+        Args:
+            recording_file: Path to the recording file
+            
+        Returns:
+            pd.DataFrame: DataFrame with events information
+        """
+        recording_file = Path(recording_file)
+        
+        # Try to determine modality from filename
+        if recording_file.suffix in ['.set', '.edf', '.bdf', '.vhdr', '.cnt', '.eeg']:
+            if self.eeg_handler is None:
+                multimodal_logger.error("EEG handler not available but EEG file requested")
+                return pd.DataFrame()
+            return self.eeg_handler.get_events_dataframe(recording_file)
+        elif recording_file.suffix in ['.nii', '.nii.gz', '.img', '.hdr']:
+            # Check filename for keywords to distinguish MRI vs fMRI
+            if any(keyword in recording_file.name.lower() for keyword in ['bold', 'func', 'task']):
+                if self.fmri_handler is None:
+                    multimodal_logger.error("fMRI handler not available but fMRI file requested")
+                    return pd.DataFrame()
+                return self.fmri_handler.get_events_dataframe(recording_file)
+            else:
+                multimodal_logger.warning(f"File appears to be an MRI file with no events: {recording_file}")
+                return pd.DataFrame()
+        else:
+            multimodal_logger.error(f"Could not determine modality for file: {recording_file}")
+            return pd.DataFrame()
+    
+    def load_recording(self, recording_file: Union[str, Path], preload: bool = False) -> Any:
+        """Load an EEG recording file with MNE.
+        
+        This implementation routes to the appropriate handler based on the file type.
+        
+        Args:
+            recording_file: Path to the recording file
+            preload: Whether to preload data into memory
+            
+        Returns:
+            Any: The loaded recording or None if loading fails
+        """
+        recording_file = Path(recording_file)
+        
+        # Try to determine modality from filename
+        if recording_file.suffix in ['.set', '.edf', '.bdf', '.vhdr', '.cnt', '.eeg']:
+            if self.eeg_handler is None:
+                multimodal_logger.error("EEG handler not available but EEG file requested")
+                return None
+            return self.eeg_handler.load_recording(recording_file, preload=preload)
+        elif recording_file.suffix in ['.nii', '.nii.gz', '.img', '.hdr']:
+            # Check filename for keywords to distinguish MRI vs fMRI
+            if any(keyword in recording_file.name.lower() for keyword in ['bold', 'func', 'task']):
+                if self.fmri_handler is None:
+                    multimodal_logger.error("fMRI handler not available but fMRI file requested")
+                    return None
+                return self.fmri_handler.load_scan(recording_file)
+            else:
+                if self.mri_handler is None:
+                    multimodal_logger.error("MRI handler not available but MRI file requested")
+                    return None
+                return self.mri_handler.load_scan(recording_file)
+        else:
+            multimodal_logger.error(f"Could not determine modality for file: {recording_file}")
+            return None
     
     def get_subject_ids(self) -> List[str]:
         """Get a list of all subject IDs in the dataset.
@@ -146,12 +183,21 @@ class MultimodalDataset:
         Returns:
             List[str]: List of unique subject IDs
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            multimodal_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         # Gather files from all modalities
-        all_files = (
-            self.get_eeg_files() + 
-            self.get_mri_files() + 
-            self.get_fmri_files()
-        )
+        all_files = self.get_recording_files()
+        
+        # Add specific MRI/fMRI files that might not be included in get_recording_files
+        if self.available_modalities["mri"] and self.mri_handler:
+            all_files.extend(self.mri_handler.get_structural_scans("T1w"))
+            all_files.extend(self.mri_handler.get_structural_scans("T2w"))
+            
+        if self.available_modalities["fmri"] and self.fmri_handler:
+            all_files.extend(self.fmri_handler.get_functional_scans())
         
         # Extract subject IDs from filenames using BIDS naming convention
         subject_ids = set()
@@ -178,6 +224,11 @@ class MultimodalDataset:
             "fmri": []
         }
         
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            multimodal_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return result
+        
         # Helper function to filter files by subject ID
         def filter_by_subject(files: List[Path]) -> List[Path]:
             return [
@@ -186,38 +237,18 @@ class MultimodalDataset:
             ]
         
         # Get files for each modality
-        if self.available_modalities["eeg"]:
-            result["eeg"] = filter_by_subject(self.get_eeg_files())
+        if self.available_modalities["eeg"] and self.eeg_handler:
+            result["eeg"] = filter_by_subject(self.eeg_handler.get_recording_files())
             
-        if self.available_modalities["mri"]:
-            result["mri"] = filter_by_subject(self.get_mri_files())
+        if self.available_modalities["mri"] and self.mri_handler:
+            result["mri"] = filter_by_subject(self.mri_handler.get_recording_files())
+            result["mri"].extend(filter_by_subject(self.mri_handler.get_structural_scans("T1w")))
+            result["mri"].extend(filter_by_subject(self.mri_handler.get_structural_scans("T2w")))
             
-        if self.available_modalities["fmri"]:
-            result["fmri"] = filter_by_subject(self.get_fmri_files())
+        if self.available_modalities["fmri"] and self.fmri_handler:
+            result["fmri"] = filter_by_subject(self.fmri_handler.get_functional_scans())
         
         return result
-    
-    def get_eeg_events(self, recording_file: Union[str, Path]) -> pd.DataFrame:
-        """Get events for an EEG recording file.
-        
-        Args:
-            recording_file: Path to the EEG recording file
-            
-        Returns:
-            pd.DataFrame: DataFrame with events information
-        """
-        return self.eeg_handler.get_events_dataframe(recording_file)
-    
-    def get_fmri_events(self, recording_file: Union[str, Path]) -> pd.DataFrame:
-        """Get events for an fMRI recording file.
-        
-        Args:
-            recording_file: Path to the fMRI recording file
-            
-        Returns:
-            pd.DataFrame: DataFrame with events information
-        """
-        return self.fmri_handler.get_events_dataframe(recording_file)
     
     def get_multimodal_runs(self) -> Dict[str, Dict[str, List[Path]]]:
         """Identify matching runs across modalities based on BIDS metadata.
@@ -228,8 +259,9 @@ class MultimodalDataset:
         Returns:
             Dict[str, Dict[str, List[Path]]]: Dictionary of runs with modality files
         """
-        if not self.is_downloaded:
-            logger.warning("Dataset not yet downloaded. Call download_dataset() first.")
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            multimodal_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
             return {}
         
         # Get all subject IDs
@@ -272,7 +304,7 @@ class MultimodalDataset:
                 if modality_count > 1:
                     matching_runs[run_key] = modality_files
         
-        logger.info(f"Found {len(matching_runs)} multimodal recording runs")
+        multimodal_logger.info(f"Found {len(matching_runs)} multimodal recording runs")
         return matching_runs
     
     def describe(self) -> Dict:
@@ -289,5 +321,5 @@ class MultimodalDataset:
                 modality: available 
                 for modality, available in self.available_modalities.items()
             },
-            "subject_count": len(self.get_subject_ids()) if self.is_downloaded else None
+            "subject_count": len(self.get_subject_ids()) if self.is_downloaded() else None
         } 

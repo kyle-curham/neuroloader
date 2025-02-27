@@ -1,16 +1,17 @@
 """EEG data preprocessing module"""
 
-import logging
-from typing import Dict, List, Optional, Any, Tuple, Union
-from pathlib import Path
 import os
 import numpy as np
+from typing import Dict, List, Optional, Any, Tuple, Union
+from pathlib import Path
 import pandas as pd
 
 from ..loaders.eeg_loader import EEGDataset
 from .base_processor import BaseProcessor
+from ..logger import get_logger
 
-logger = logging.getLogger(__name__)
+# Get logger for this module
+logger = get_logger("processors.eeg")
 
 class EEGProcessor(BaseProcessor):
     """Processor for EEG data preprocessing.

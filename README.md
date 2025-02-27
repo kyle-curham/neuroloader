@@ -9,6 +9,7 @@ A Python package for loading and processing neuroimaging data from various sourc
 - **Preprocessing Pipeline**: Modular preprocessing components with automatic derivative data detection
 - **Events Handling**: Tools for working with experiment events and annotations
 - **Data Integration**: Combine data from multiple sources and modalities
+- **Automatic Pipeline Generation**: Create appropriate preprocessing pipelines based on data modalities and preprocessing status
 
 ## Installation
 
@@ -21,12 +22,12 @@ Make sure you have git-annex installed, which is required for DataLad to downloa
 ## Quick Start
 
 ```python
-from neuroloader.factory import DatasetFactory
+from neuroloader.factory import create_dataset
 from neuroloader.processors.eeg_processor import EEGProcessor
 from neuroloader.processors.pipeline import PreprocessingPipeline
 
 # Create a dataset
-dataset = DatasetFactory.create_dataset(
+dataset = create_dataset(
     "DS002778",  # OpenNeuro dataset ID
     data_dir="./data"
 )
@@ -68,6 +69,45 @@ if results.get("preprocessing_skipped", False):
 else:
     print("Full preprocessing was applied to the raw dataset")
 ```
+
+## Automatic Pipeline Generation
+
+You can use the factory to automatically create both a dataset and an appropriate preprocessing pipeline:
+
+```python
+from neuroloader.factory import create_dataset
+
+# Create a dataset and pipeline in one step
+result = create_dataset(
+    "ds000228",
+    data_dir="./data",
+    with_pipeline=True,
+    pipeline_options={
+        "skip_if_derivative": True,
+        "mri_bias_correction": True,
+        "fmri_motion_correction": True,
+        "eeg_artifact_removal": True
+    }
+)
+
+# Extract the dataset and pipeline
+dataset = result["dataset"]
+pipeline = result["pipeline"]
+
+# Check the dataset modalities
+modalities = dataset.get_modalities()
+print(f"Detected modalities: {modalities}")
+
+# Execute the pipeline
+results = pipeline.execute(datasets=[dataset])
+```
+
+The factory will:
+1. Detect available modalities in the dataset
+2. Create appropriate processors for each modality
+3. Configure preprocessing steps based on best practices
+4. Set up the pipeline to respect derivative status
+5. Allow customization through pipeline_options
 
 ## Working with Derivative Data
 

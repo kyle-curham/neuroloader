@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple
 import pandas as pd
 import numpy as np
-import logging
 from urllib.parse import urljoin
 
 from .base_loader import BaseDataset
 from ..utils import find_files_by_extension, load_json_file, parse_bids_filename
+from .. import logger
 
-logger = logging.getLogger(__name__)
+# Use the package's centralized logger
+mri_logger = logger.get_logger('loaders.mri')
 
 class MRIDataset(BaseDataset):
     """Class for handling MRI datasets from OpenNeuro.
@@ -54,6 +55,11 @@ class MRIDataset(BaseDataset):
         Returns:
             List[Path]: List of paths to MRI files
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         return find_files_by_extension(self.dataset_dir, self.mri_extensions)
     
     def get_structural_scans(self, scan_type: str = "T1w") -> List[Path]:
@@ -65,6 +71,11 @@ class MRIDataset(BaseDataset):
         Returns:
             List[Path]: List of paths to structural scan files
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         all_mri_files = self.get_recording_files()
         
         # Filter by scan type
@@ -73,7 +84,7 @@ class MRIDataset(BaseDataset):
             if scan_type.lower() in file_path.name.lower():
                 structural_scans.append(file_path)
         
-        logger.info(f"Found {len(structural_scans)} {scan_type} structural scans")
+        mri_logger.info(f"Found {len(structural_scans)} {scan_type} structural scans")
         return structural_scans
     
     def load_scan(self, scan_file: Union[str, Path]) -> Tuple[Optional[nib.Nifti1Image], Optional[Dict]]:
@@ -86,15 +97,20 @@ class MRIDataset(BaseDataset):
             Tuple[Optional[nib.Nifti1Image], Optional[Dict]]: 
                 Tuple of (NIfTI image object, metadata dictionary)
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return None, None
+            
         scan_file = Path(scan_file)
         
         if not scan_file.exists():
-            logger.error(f"Scan file does not exist: {scan_file}")
+            mri_logger.error(f"Scan file does not exist: {scan_file}")
             return None, None
         
         try:
             # Load the NIfTI file
-            logger.info(f"Loading scan from {scan_file}")
+            mri_logger.info(f"Loading scan from {scan_file}")
             img = nib.load(scan_file)
             
             # Try to find metadata file
@@ -104,14 +120,14 @@ class MRIDataset(BaseDataset):
             if metadata_path.exists():
                 try:
                     metadata = load_json_file(metadata_path)
-                    logger.info(f"Loaded metadata from {metadata_path}")
+                    mri_logger.info(f"Loaded metadata from {metadata_path}")
                 except Exception as e:
-                    logger.warning(f"Failed to load metadata: {str(e)}")
+                    mri_logger.warning(f"Failed to load metadata: {str(e)}")
             
             return img, metadata
             
         except Exception as e:
-            logger.error(f"Failed to load scan: {str(e)}")
+            mri_logger.error(f"Failed to load scan: {str(e)}")
             return None, None
     
     def get_events_dataframe(self, recording_file: Union[str, Path]) -> pd.DataFrame:
@@ -126,10 +142,15 @@ class MRIDataset(BaseDataset):
         Returns:
             pd.DataFrame: DataFrame with events information
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return pd.DataFrame()
+            
         recording_file = Path(recording_file)
         
         if not recording_file.exists():
-            logger.error(f"Recording file does not exist: {recording_file}")
+            mri_logger.error(f"Recording file does not exist: {recording_file}")
             return pd.DataFrame()
         
         # Try to find events file in the same directory
@@ -141,17 +162,17 @@ class MRIDataset(BaseDataset):
             if events_files:
                 events_file = events_files[0]
             else:
-                logger.warning(f"No events file found for {recording_file}")
+                mri_logger.warning(f"No events file found for {recording_file}")
                 return pd.DataFrame()
         
         try:
             # Load events from TSV file
             events_df = pd.read_csv(events_file, sep='\t')
-            logger.info(f"Loaded events from {events_file}")
+            mri_logger.info(f"Loaded events from {events_file}")
             return events_df
             
         except Exception as e:
-            logger.error(f"Failed to load events file: {str(e)}")
+            mri_logger.error(f"Failed to load events file: {str(e)}")
             return pd.DataFrame()
 
 
@@ -188,6 +209,11 @@ class FMRIDataset(MRIDataset):
         Returns:
             List[Path]: List of paths to functional scan files
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         all_mri_files = self.get_recording_files()
         
         # Filter for functional scans (containing 'bold', 'func', or 'task')
@@ -196,7 +222,7 @@ class FMRIDataset(MRIDataset):
             if any(keyword in file_path.name.lower() for keyword in ['bold', 'func', 'task']):
                 functional_scans.append(file_path)
         
-        logger.info(f"Found {len(functional_scans)} functional scans")
+        mri_logger.info(f"Found {len(functional_scans)} functional scans")
         return functional_scans
     
     def get_events_dataframe(self, recording_file: Union[str, Path]) -> pd.DataFrame:
@@ -210,10 +236,15 @@ class FMRIDataset(MRIDataset):
         Returns:
             pd.DataFrame: DataFrame with events information
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return pd.DataFrame()
+            
         recording_file = Path(recording_file)
         
         if not recording_file.exists():
-            logger.error(f"Recording file does not exist: {recording_file}")
+            mri_logger.error(f"Recording file does not exist: {recording_file}")
             return pd.DataFrame()
         
         # Try to find events file based on BIDS naming convention
@@ -229,7 +260,7 @@ class FMRIDataset(MRIDataset):
                 if events_files:
                     events_file = events_files[0]
                 else:
-                    logger.warning(f"No events file found for {recording_file}")
+                    mri_logger.warning(f"No events file found for {recording_file}")
                     return pd.DataFrame()
         else:
             # Fallback to simple name-based matching
@@ -240,7 +271,7 @@ class FMRIDataset(MRIDataset):
                 if events_files:
                     events_file = events_files[0]
                 else:
-                    logger.warning(f"No events file found for {recording_file}")
+                    mri_logger.warning(f"No events file found for {recording_file}")
                     return pd.DataFrame()
         
         try:
@@ -249,14 +280,14 @@ class FMRIDataset(MRIDataset):
             
             # Ensure required columns exist
             if 'onset' not in events_df.columns:
-                logger.warning(f"Events file {events_file} missing required 'onset' column")
+                mri_logger.warning(f"Events file {events_file} missing required 'onset' column")
                 return pd.DataFrame()
                 
-            logger.info(f"Loaded events from {events_file} with {len(events_df)} events")
+            mri_logger.info(f"Loaded events from {events_file} with {len(events_df)} events")
             return events_df
             
         except Exception as e:
-            logger.error(f"Failed to load events file: {str(e)}")
+            mri_logger.error(f"Failed to load events file: {str(e)}")
             return pd.DataFrame()
             
     def get_task_information(self, task_name: str) -> Optional[Dict]:
@@ -268,11 +299,16 @@ class FMRIDataset(MRIDataset):
         Returns:
             Optional[Dict]: Dictionary with task information or None if not found
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return None
+            
         # Try to find task JSON file (*_task-<task_name>_*.json)
         task_files = list(self.dataset_dir.rglob(f"*task-{task_name}*.json"))
         
         if not task_files:
-            logger.warning(f"No task information found for task '{task_name}'")
+            mri_logger.warning(f"No task information found for task '{task_name}'")
             return None
             
         # Use the first found task file
@@ -280,9 +316,9 @@ class FMRIDataset(MRIDataset):
         
         try:
             task_info = load_json_file(task_file)
-            logger.info(f"Loaded task information from {task_file}")
+            mri_logger.info(f"Loaded task information from {task_file}")
             return task_info
             
         except Exception as e:
-            logger.error(f"Failed to load task information: {str(e)}")
+            mri_logger.error(f"Failed to load task information: {str(e)}")
             return None 

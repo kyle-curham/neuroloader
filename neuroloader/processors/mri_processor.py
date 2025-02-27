@@ -1,15 +1,18 @@
 """MRI data preprocessing module"""
 
-import logging
-from typing import Dict, List, Optional, Any, Tuple, Union
-from pathlib import Path
 import os
 import numpy as np
+import nibabel as nib
+from typing import Dict, List, Optional, Any, Tuple, Union
+from pathlib import Path
+import tempfile
 
 from ..loaders.mri_loader import MRIDataset
 from .base_processor import BaseProcessor
+from ..logger import get_logger
 
-logger = logging.getLogger(__name__)
+# Get logger for this module
+logger = get_logger("processors.mri")
 
 class MRIProcessor(BaseProcessor):
     """Processor for structural MRI data preprocessing.
@@ -31,7 +34,6 @@ class MRIProcessor(BaseProcessor):
         # Try to import neuroimaging libraries
         self.libs = {}
         try:
-            import nibabel as nib
             self.libs["nibabel"] = nib
             logger.info("NiBabel successfully imported")
         except ImportError:

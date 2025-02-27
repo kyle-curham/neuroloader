@@ -1,15 +1,17 @@
 """Pipeline for chaining neuroimaging preprocessing steps"""
 
-import logging
+import os
+import json
 from typing import Dict, List, Optional, Any, Union, Callable, Tuple
 from pathlib import Path
-import json
 from datetime import datetime
 
 from .base_processor import BaseProcessor
 from ..loaders.base_loader import BaseDataset
+from ..logger import get_logger
 
-logger = logging.getLogger(__name__)
+# Get logger for this module
+logger = get_logger("processors.pipeline")
 
 class PreprocessingPipeline:
     """Pipeline for chaining multiple preprocessing steps.
