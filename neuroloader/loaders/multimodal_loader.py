@@ -307,19 +307,71 @@ class MultimodalDataset(BaseDataset):
         multimodal_logger.info(f"Found {len(matching_runs)} multimodal recording runs")
         return matching_runs
     
-    def describe(self) -> Dict:
-        """Get a description of the dataset.
+    def describe(self) -> Dict[str, Any]:
+        """Get a comprehensive description of the multimodal dataset.
+        
+        This method provides an aggregated view of all modalities in the dataset,
+        combining general information with modality-specific details.
         
         Returns:
-            Dict: Dictionary containing dataset metadata
+            Dict[str, Any]: Dictionary containing dataset metadata and details for each modality
         """
-        return {
-            "dataset_id": self.dataset_id,
-            "version": self.version,
-            "data_dir": str(self.data_dir / self.dataset_id),
+        # Get base details
+        base_description = super().describe()
+        
+        description = {
+            **base_description,
             "modalities": {
                 modality: available 
                 for modality, available in self.available_modalities.items()
             },
-            "subject_count": len(self.get_subject_ids()) if self.is_downloaded() else None
-        } 
+        }
+        
+        # Check if dataset is downloaded
+        if not self.is_downloaded():
+            description["download_status"] = "Not downloaded"
+            return description
+            
+        # Add subject information
+        subject_ids = self.get_subject_ids()
+        description["subject_count"] = len(subject_ids)
+        
+        # Get multimodal runs for a more comprehensive view
+        multimodal_runs = self.get_multimodal_runs()
+        description["run_count"] = len(multimodal_runs)
+        
+        # Add modality-specific information by calling each handler's describe method
+        modality_info = {}
+        
+        # MRI information if available
+        if hasattr(self, 'mri_handler') and self.mri_handler:
+            try:
+                mri_description = self.mri_handler.describe()
+                if "mri_info" in mri_description:
+                    modality_info["mri"] = mri_description["mri_info"]
+            except Exception as e:
+                multimodal_logger.warning(f"Failed to get MRI description: {str(e)}")
+        
+        # fMRI information if available
+        if hasattr(self, 'fmri_handler') and self.fmri_handler:
+            try:
+                fmri_description = self.fmri_handler.describe()
+                if "mri_info" in fmri_description:
+                    modality_info["fmri"] = fmri_description["mri_info"]
+            except Exception as e:
+                multimodal_logger.warning(f"Failed to get fMRI description: {str(e)}")
+        
+        # EEG information if available
+        if hasattr(self, 'eeg_handler') and self.eeg_handler:
+            try:
+                eeg_description = self.eeg_handler.describe()
+                if "eeg_info" in eeg_description:
+                    modality_info["eeg"] = eeg_description["eeg_info"]
+            except Exception as e:
+                multimodal_logger.warning(f"Failed to get EEG description: {str(e)}")
+        
+        # Add modality-specific information to the description
+        description["modality_details"] = modality_info
+        description["download_status"] = "Downloaded"
+        
+        return description 

@@ -54,6 +54,72 @@ class EEGDataset(BaseDataset):
             '*events.tsv', '*_events.json'
         ]
     
+    def describe(self) -> Dict[str, Any]:
+        """Get a detailed description of the EEG dataset.
+        
+        This method extends the base describe method with EEG-specific information.
+        It provides a summary of recording files, formats, channels, and events.
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing dataset metadata and EEG-specific information
+        """
+        # Get base description
+        description = super().describe()
+        
+        # Check if dataset is downloaded
+        if not self.is_downloaded():
+            description["download_status"] = "Not downloaded"
+            return description
+            
+        # Get recording files and count by format
+        recording_files = self.get_recording_files()
+        
+        # Count recordings by format
+        format_counts = {}
+        for file in recording_files:
+            ext = file.suffix
+            format_counts[ext] = format_counts.get(ext, 0) + 1
+        
+        # Sample recording information (using the first file if available)
+        sample_recording_info = {}
+        if recording_files:
+            try:
+                # Load the first recording to get basic info without loading data
+                first_recording = self.load_recording(recording_files[0], preload=False)
+                if first_recording:
+                    sample_recording_info = {
+                        "sampling_rate": first_recording.info['sfreq'],
+                        "channel_count": len(first_recording.ch_names),
+                        "channel_types": dict(first_recording.get_channel_types()),
+                        "recording_length": first_recording.times[-1] if len(first_recording.times) > 0 else 0,
+                        "montage": str(first_recording.get_montage()) if hasattr(first_recording, 'get_montage') else None
+                    }
+                    
+                    # Get events information if available
+                    try:
+                        events_df = self.get_events_dataframe(recording_files[0])
+                        if not events_df.empty:
+                            event_types = events_df['trial_type'].unique().tolist() if 'trial_type' in events_df.columns else []
+                            sample_recording_info["event_types"] = event_types
+                            sample_recording_info["event_count"] = len(events_df)
+                    except Exception as e:
+                        eeg_logger.warning(f"Could not extract events information: {str(e)}")
+            except Exception as e:
+                eeg_logger.warning(f"Could not load sample recording: {str(e)}")
+        
+        # Add EEG-specific information to description
+        eeg_info = {
+            "recording_count": len(recording_files),
+            "recording_formats": format_counts,
+            "sample_recording_info": sample_recording_info
+        }
+        
+        # Merge with base description
+        description["eeg_info"] = eeg_info
+        description["download_status"] = "Downloaded"
+        
+        return description
+    
     def get_recording_files(self) -> List[Path]:
         """Get a list of EEG recording files in the dataset.
         

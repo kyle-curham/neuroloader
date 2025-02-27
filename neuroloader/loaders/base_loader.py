@@ -72,6 +72,20 @@ class BaseDataset(ABC):
         
         self.logger.info(f"Initialized {self.__class__.__name__}")
     
+    def is_downloaded(self) -> bool:
+        """Check if the dataset has been downloaded.
+        
+        Returns:
+            bool: True if the dataset directory exists and contains files
+        """
+        if not self.dataset_dir.exists():
+            return False
+            
+        # Check if directory has any files (excluding hidden files)
+        files = [f for f in self.dataset_dir.rglob('*') if not str(f).startswith('.')]
+        
+        return len(files) > 0
+
     def _detect_derivative_data(self) -> bool:
         """Detect if this dataset contains derivative (preprocessed) data.
         

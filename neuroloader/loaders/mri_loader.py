@@ -49,6 +49,77 @@ class MRIDataset(BaseDataset):
             '*_T1w.json', '*_T2w.json', '*_bold.json', '*_dwi.json'
         ]
     
+    def describe(self) -> Dict[str, Any]:
+        """Get a detailed description of the MRI dataset.
+        
+        This method extends the base describe method with MRI-specific information.
+        It provides a summary of scan types, formats, and dimensions.
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing dataset metadata and MRI-specific information
+        """
+        # Get base description
+        description = super().describe()
+        
+        # Check if dataset is downloaded
+        if not self.is_downloaded():
+            description["download_status"] = "Not downloaded"
+            return description
+            
+        # Get recording files
+        recording_files = self.get_recording_files()
+        
+        # Count by file format
+        format_counts = {}
+        for file in recording_files:
+            ext = file.suffix
+            format_counts[ext] = format_counts.get(ext, 0) + 1
+        
+        # Count by scan type based on filename patterns
+        scan_type_counts = {}
+        for file in recording_files:
+            # Parse filename to extract BIDS components
+            components = parse_bids_filename(file.name)
+            if components and 'modality' in components:
+                scan_type = components['modality']
+                scan_type_counts[scan_type] = scan_type_counts.get(scan_type, 0) + 1
+        
+        # Sample scan information (using the first file if available)
+        sample_scan_info = {}
+        if recording_files:
+            try:
+                # Load the first scan to get basic info
+                scan_img, scan_metadata = self.load_scan(recording_files[0])
+                if scan_img:
+                    sample_scan_info = {
+                        "dimensions": scan_img.shape,
+                        "voxel_sizes": scan_img.header.get_zooms(),
+                        "data_type": str(scan_img.get_data_dtype()),
+                    }
+                    
+                if scan_metadata:
+                    # Include relevant metadata fields
+                    important_metadata = {k: v for k, v in scan_metadata.items() 
+                                         if k in ('RepetitionTime', 'EchoTime', 'Manufacturer', 
+                                                  'MagneticFieldStrength', 'TaskName')}
+                    sample_scan_info["metadata"] = important_metadata
+            except Exception as e:
+                mri_logger.warning(f"Could not load sample scan: {str(e)}")
+        
+        # Add MRI-specific information to description
+        mri_info = {
+            "scan_count": len(recording_files),
+            "file_formats": format_counts,
+            "scan_types": scan_type_counts,
+            "sample_scan_info": sample_scan_info
+        }
+        
+        # Merge with base description
+        description["mri_info"] = mri_info
+        description["download_status"] = "Downloaded"
+        
+        return description
+    
     def get_recording_files(self) -> List[Path]:
         """Get a list of MRI recording files in the dataset.
         
@@ -202,6 +273,89 @@ class FMRIDataset(MRIDataset):
         self.event_file_patterns = [
             '*_events.tsv', '*_bold.json'
         ]
+    
+    def describe(self) -> Dict[str, Any]:
+        """Get a detailed description of the fMRI dataset.
+        
+        This method extends the MRIDataset describe method with fMRI-specific information.
+        It provides a summary of functional scan types, task information, and events.
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing dataset metadata and fMRI-specific information
+        """
+        # Get base description from MRIDataset
+        description = super().describe()
+        
+        # Check if dataset is downloaded
+        if not self.is_downloaded():
+            return description
+            
+        # Get functional scans
+        functional_scans = self.get_functional_scans()
+        
+        # Count by task
+        task_counts = {}
+        for file in functional_scans:
+            # Parse filename to extract BIDS components
+            components = parse_bids_filename(file.name)
+            if components and 'task' in components:
+                task = components['task']
+                task_counts[task] = task_counts.get(task, 0) + 1
+        
+        # Get available task information
+        tasks_info = {}
+        for task in task_counts.keys():
+            try:
+                task_metadata = self.get_task_information(task)
+                if task_metadata:
+                    # Extract key information
+                    task_info = {
+                        "description": task_metadata.get("TaskDescription", ""),
+                        "instructions": task_metadata.get("Instructions", ""),
+                        "cognitive_paradigm": task_metadata.get("CognitiveParadigm", ""),
+                        "response_options": task_metadata.get("ResponseOptions", [])
+                    }
+                    tasks_info[task] = task_info
+            except Exception as e:
+                mri_logger.warning(f"Failed to get task information for {task}: {str(e)}")
+        
+        # Sample events information
+        sample_events_info = {}
+        if functional_scans:
+            try:
+                # Get events from first functional scan
+                events_df = self.get_events_dataframe(functional_scans[0])
+                if not events_df.empty:
+                    # Get event types and counts
+                    if 'trial_type' in events_df.columns:
+                        event_types = events_df['trial_type'].value_counts().to_dict()
+                        sample_events_info["event_types"] = event_types
+                    else:
+                        # Use unique combinations of available columns as event types
+                        sample_events_info["columns"] = events_df.columns.tolist()
+                    
+                    sample_events_info["total_events"] = len(events_df)
+                    sample_events_info["duration_range"] = [
+                        events_df['duration'].min() if 'duration' in events_df.columns else 0,
+                        events_df['duration'].max() if 'duration' in events_df.columns else 0
+                    ]
+            except Exception as e:
+                mri_logger.warning(f"Failed to extract sample events information: {str(e)}")
+        
+        # Add fMRI-specific information
+        fmri_info = description.get("mri_info", {})
+        fmri_info.update({
+            "functional_scan_count": len(functional_scans),
+            "tasks": task_counts,
+            "task_details": tasks_info,
+            "sample_events_info": sample_events_info,
+            "is_functional": True
+        })
+        
+        # Update the mri_info with fMRI details
+        description["mri_info"] = fmri_info
+        
+        return description
     
     def get_functional_scans(self) -> List[Path]:
         """Get all functional MRI scans in the dataset.
