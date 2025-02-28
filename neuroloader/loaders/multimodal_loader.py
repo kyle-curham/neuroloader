@@ -92,6 +92,11 @@ class MultimodalDataset(BaseDataset):
         Returns:
             List[Path]: List of paths to structural scan files
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            multimodal_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         if not self.available_modalities["mri"] or self.mri_handler is None:
             multimodal_logger.warning("MRI modality not available in this dataset")
             return []
@@ -104,6 +109,11 @@ class MultimodalDataset(BaseDataset):
         Returns:
             List[Path]: List of paths to functional scan files
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            multimodal_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         if not self.available_modalities["fmri"] or self.fmri_handler is None:
             multimodal_logger.warning("fMRI modality not available in this dataset")
             return []
@@ -119,6 +129,11 @@ class MultimodalDataset(BaseDataset):
         Returns:
             pd.DataFrame: DataFrame with events information
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            multimodal_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return pd.DataFrame()
+            
         recording_file = Path(recording_file)
         
         # Try to determine modality from filename
@@ -153,6 +168,11 @@ class MultimodalDataset(BaseDataset):
         Returns:
             Any: The loaded recording or None if loading fails
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            multimodal_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return None
+            
         recording_file = Path(recording_file)
         
         # Try to determine modality from filename
@@ -308,14 +328,7 @@ class MultimodalDataset(BaseDataset):
         return matching_runs
     
     def describe(self) -> Dict[str, Any]:
-        """Get a comprehensive description of the multimodal dataset.
-        
-        This method provides an aggregated view of all modalities in the dataset,
-        combining general information with modality-specific details.
-        
-        Returns:
-            Dict[str, Any]: Dictionary containing dataset metadata and details for each modality
-        """
+        """Get a comprehensive description of the multimodal dataset."""
         # Get base details
         base_description = super().describe()
         
@@ -327,11 +340,42 @@ class MultimodalDataset(BaseDataset):
             },
         }
         
-        # Check if dataset is downloaded
+        # CRITICAL FIX: If dataset is not downloaded, ABSOLUTELY DO NOT call any handler methods
         if not self.is_downloaded():
             description["download_status"] = "Not downloaded"
+            
+            # Add placeholder information without ANY file system access
+            modality_info = {}
+            if self.available_modalities.get("mri", False):
+                modality_info["mri"] = {
+                    "scan_count": 0,
+                    "file_formats": {},
+                    "scan_types": {},
+                    "sample_scan_info": {}
+                }
+            if self.available_modalities.get("fmri", False):
+                modality_info["fmri"] = {
+                    "functional_scan_count": 0,
+                    "tasks": {},
+                    "task_details": {},
+                    "sample_events_info": {},
+                    "is_functional": True
+                }
+            if self.available_modalities.get("eeg", False):
+                modality_info["eeg"] = {
+                    "recording_count": 0,
+                    "recording_formats": {},
+                    "channel_types": {},
+                    "sample_recording_info": {}
+                }
+            description["modality_details"] = modality_info
+            description["subject_count"] = 0
+            description["run_count"] = 0
+            
             return description
             
+        # Only get here if dataset IS downloaded
+        
         # Add subject information
         subject_ids = self.get_subject_ids()
         description["subject_count"] = len(subject_ids)

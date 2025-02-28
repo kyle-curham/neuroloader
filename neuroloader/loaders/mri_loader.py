@@ -61,12 +61,19 @@ class MRIDataset(BaseDataset):
         # Get base description
         description = super().describe()
         
-        # Check if dataset is downloaded
+        # Check if dataset is downloaded - if not, return minimal description WITHOUT accessing file system
         if not self.is_downloaded():
             description["download_status"] = "Not downloaded"
+            # Add placeholder for MRI info without attempting file access
+            description["mri_info"] = {
+                "scan_count": 0,
+                "file_formats": {},
+                "scan_types": {},
+                "sample_scan_info": {}
+            }
             return description
             
-        # Get recording files
+        # ONLY IF DOWNLOADED: Get recording files
         recording_files = self.get_recording_files()
         
         # Count by file format
@@ -124,6 +131,11 @@ class MRIDataset(BaseDataset):
                            task: str = None, run: str = None, return_paths: bool = True,
                            file_type: str = 'nii.gz', include_fieldmaps: bool = False) -> List[Path]:
         """Get a list of recording files for the given subject and optional filters."""
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         if subject_id and not self._is_valid_subject_id(subject_id):
             mri_logger.warning(f"Invalid subject ID format: {subject_id}")
             return []
@@ -265,6 +277,7 @@ class MRIDataset(BaseDataset):
             if scan_type.lower() in file_path.name.lower():
                 structural_scans.append(file_path)
         
+        # Log scan count (this will only run if the dataset is downloaded due to early return above)
         mri_logger.info(f"Found {len(structural_scans)} {scan_type} structural scans")
         return structural_scans
     
@@ -320,6 +333,11 @@ class MRIDataset(BaseDataset):
     
     def get_events_dataframe(self, recording_file: Union[str, Path]) -> pd.DataFrame:
         """Load events data for a functional MRI recording."""
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return pd.DataFrame()
+            
         if not recording_file:
             mri_logger.error("No recording file provided")
             return pd.DataFrame()
@@ -437,6 +455,11 @@ class FMRIDataset(MRIDataset):
         Returns:
             List[Path]: List of paths to files for the subject
         """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
         # Get basic MRI files from parent class implementation
         subject_files = super().get_subject_files(subject_id)
         
@@ -478,11 +501,21 @@ class FMRIDataset(MRIDataset):
         # Get base description from MRIDataset
         description = super().describe()
         
-        # Check if dataset is downloaded
+        # Check if dataset is downloaded - super() already added minimal info
         if not self.is_downloaded():
+            # Add fMRI-specific placeholder info WITHOUT accessing file system
+            fmri_info = description.get("mri_info", {})
+            fmri_info.update({
+                "functional_scan_count": 0,
+                "tasks": {},
+                "task_details": {},
+                "sample_events_info": {},
+                "is_functional": True
+            })
+            description["mri_info"] = fmri_info
             return description
             
-        # Get functional scans
+        # ONLY IF DOWNLOADED: Get functional scans
         functional_scans = self.get_functional_scans()
         
         # Count by task
@@ -568,6 +601,7 @@ class FMRIDataset(MRIDataset):
             if any(keyword in file_path.name.lower() for keyword in ['bold', 'func', 'task']):
                 functional_scans.append(file_path)
         
+        # Log scan count (this will only run if the dataset is downloaded due to early return above)
         mri_logger.info(f"Found {len(functional_scans)} functional scans")
         return functional_scans
     

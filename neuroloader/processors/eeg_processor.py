@@ -26,7 +26,7 @@ class EEGProcessor(BaseProcessor):
         Args:
             dataset: The dataset to process (optional)
         """
-        super().__init__("eeg_processor")
+        super().__init__(dataset)
         self.dataset = dataset
         
         # Try to import MNE
