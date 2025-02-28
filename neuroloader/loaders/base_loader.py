@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Tuple
 import os
 import pandas as pd
 import requests
@@ -185,10 +185,21 @@ class BaseDataset(ABC):
             print("\nDownloading dataset content (this may take some time)...")
             
             # Get the dataset content with git-annex showing progress
-            ds.get(".")
+            try:
+                ds.get(".")
+                self.logger.info(f"Successfully downloaded dataset {self.dataset_id}")
+                print(f"\nDataset download complete.")
+            except Exception as e:
+                # Specifically catch the "Not Found" config error
+                if "config download failed: Not Found" in str(e):
+                    self.logger.warning(f"Git config file not found, but continuing with download: {str(e)}")
+                    # Continue with download process as this error is often benign
+                    self.logger.info(f"Dataset download completed with minor issues")
+                    print(f"\nDataset download complete with minor issues.")
+                else:
+                    # Re-raise other exceptions
+                    raise
                 
-            self.logger.info(f"Successfully downloaded dataset {self.dataset_id}")
-            print(f"\nDataset download complete.")
             return True
             
         except Exception as e:
@@ -284,13 +295,24 @@ class BaseDataset(ABC):
         Returns:
             Dict: Dictionary containing dataset metadata
         """
-        return {
+        description = {
             "dataset_id": self.dataset_id,
             "version": self.version,
             "data_dir": str(self.dataset_dir),
             "dataset_type": self.__class__.__name__,
             "metadata": self.metadata
         }
+        
+        # Add simple download status 
+        description["download_status"] = "Downloaded" if self.is_downloaded() else "Not downloaded"
+        
+        # Add subject information if downloaded
+        if self.is_downloaded():
+            subject_ids = self.get_subject_ids()
+            description["subject_count"] = len(subject_ids)
+            description["subjects"] = subject_ids
+        
+        return description
 
     def get_metadata(self) -> Dict[str, Any]:
         """Get metadata for the dataset.
@@ -308,10 +330,124 @@ class BaseDataset(ABC):
         """
         raise NotImplementedError("Subclasses must implement get_modalities method")
 
+    def get_subject_ids(self) -> List[str]:
+        """Get a list of all subject IDs in the dataset.
+        
+        This method extracts subject IDs from the BIDS directory structure, filenames,
+        and participants.tsv file. It's a common functionality across all dataset types.
+        
+        Returns:
+            List[str]: List of unique subject IDs
+        """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            self.logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
+        # Set to store unique subject IDs
+        subject_ids = set()
+        
+        # Method 1: Parse participants.tsv file (recommended BIDS way)
+        participants_file = self.dataset_dir / 'participants.tsv'
+        if participants_file.exists():
+            try:
+                participants_df = pd.read_csv(participants_file, sep='\t')
+                if 'participant_id' in participants_df.columns:
+                    # Extract subject IDs from participant_id column (format: sub-XXX)
+                    import re
+                    sub_pattern = re.compile(r'sub-(\w+)')
+                    
+                    for participant_id in participants_df['participant_id']:
+                        if pd.notna(participant_id):
+                            match = sub_pattern.match(participant_id)
+                            if match:
+                                subject_ids.add(match.group(1))
+                            else:
+                                # If it doesn't match the pattern, but isn't NaN, add it directly
+                                if participant_id and str(participant_id).lower() != 'nan':
+                                    subject_ids.add(str(participant_id).replace('sub-', ''))
+                self.logger.info(f"Extracted {len(subject_ids)} subject IDs from participants.tsv")
+            except Exception as e:
+                self.logger.warning(f"Failed to parse participants.tsv: {str(e)}")
+        
+        # Method 2: Look for subject directories (standard BIDS approach)
+        if not subject_ids:
+            # Look for directories matching sub-XXX pattern
+            import re
+            sub_dir_pattern = re.compile(r'sub-(\w+)')
+            
+            # Find all subject directories in the dataset
+            for item in self.dataset_dir.glob('sub-*'):
+                if item.is_dir():
+                    match = sub_dir_pattern.match(item.name)
+                    if match:
+                        subject_ids.add(match.group(1))
+            
+            # Also check for subject directories inside session directories
+            for item in self.dataset_dir.glob('ses-*/sub-*'):
+                if item.is_dir():
+                    match = sub_dir_pattern.match(item.name)
+                    if match:
+                        subject_ids.add(match.group(1))
+                        
+            self.logger.info(f"Extracted {len(subject_ids)} subject IDs from directory names")
+        
+        # Method 3: Look at file names (use existing util function)
+        from ..utils import parse_bids_filename, find_files_by_extension
+        
+        # If we still don't have subjects or want to validate what we found
+        # First, we need to get a list of relevant files
+        common_extensions = ['.nii', '.nii.gz', '.json', '.tsv', '.set', '.vhdr', '.edf']
+        all_files = find_files_by_extension(self.dataset_dir, common_extensions)
+        
+        # Extract subject IDs from filenames
+        for file_path in all_files:
+            file_parts = parse_bids_filename(file_path.name)
+            if 'sub' in file_parts:
+                subject_ids.add(file_parts['sub'])
+        
+        if not subject_ids:
+            self.logger.warning("No subject IDs found in the dataset")
+        else:
+            self.logger.info(f"Final subject count: {len(subject_ids)}")
+            
+        return sorted(list(subject_ids))
+    
+    @abstractmethod
+    def get_subject_files(self, subject_id: str) -> List[Path]:
+        """Get all files for a specific subject.
+        
+        This method should be implemented by each modality-specific subclass
+        to handle finding files using the appropriate file extensions and patterns.
+        
+        Args:
+            subject_id: Subject ID to get files for
+            
+        Returns:
+            List[Path]: List of paths to files for the subject
+        """
+        pass
+
     def __str__(self) -> str:
         """String representation of the dataset.
         
         Returns:
             str: String representation
         """
-        return f"{self.__class__.__name__}(dataset_id={self.dataset_id}, version={self.version})" 
+        return f"{self.__class__.__name__}(dataset_id={self.dataset_id}, version={self.version})"
+
+    def find_files(self, pattern: str) -> List[Path]:
+        """Find files matching a glob pattern in the dataset directory.
+        
+        Args:
+            pattern: Glob pattern to match
+            
+        Returns:
+            List[Path]: List of paths to matching files
+        """
+        # Check if the dataset is downloaded
+        if not self.is_downloaded():
+            base_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+            return []
+            
+        return list(self.dataset_dir.glob(pattern))

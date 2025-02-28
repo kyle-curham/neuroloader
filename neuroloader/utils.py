@@ -135,7 +135,7 @@ def find_files_by_extension(
         recursive: Whether to search recursively
         
     Returns:
-        List[Path]: List of found file paths
+        List[Path]: List of found file paths, excluding any files in .git directories
     """
     root_dir = Path(root_dir)
     
@@ -152,10 +152,16 @@ def find_files_by_extension(
     
     if recursive:
         for path in root_dir.rglob('*'):
+            # Skip any files that are in .git directories
+            if '.git' in str(path):
+                continue
             if path.is_file() and path.suffix.lower() in normalized_extensions:
                 results.append(path)
     else:
         for path in root_dir.glob('*'):
+            # Skip any files that are in .git directories
+            if '.git' in str(path):
+                continue
             if path.is_file() and path.suffix.lower() in normalized_extensions:
                 results.append(path)
     
@@ -206,4 +212,36 @@ def parse_bids_filename(filename: str) -> Dict[str, str]:
         extension = '.'.join(base_filename.split('.')[-2:]) if base_filename.endswith('.nii.gz') else base_filename.split('.')[-1]
         result['extension'] = extension
     
-    return result 
+    return result
+
+def build_bids_filename(components: Dict[str, str]) -> str:
+    """Build a BIDS-formatted filename from components.
+    
+    This is the reverse of parse_bids_filename.
+    
+    Args:
+        components: Dictionary of BIDS entities (e.g., {'subject': '001', 'task': 'rest'})
+        
+    Returns:
+        str: BIDS-formatted filename without extension
+    """
+    # Order of components in BIDS filenames
+    bids_order = ['subject', 'session', 'task', 'acq', 'ce', 'dir', 'rec', 'run', 'echo', 'part', 'modality']
+    
+    # Build filename parts
+    filename_parts = []
+    
+    # Add each component in the correct order, if it exists
+    for key in bids_order:
+        if key in components:
+            # Handle special case for 'subject' which becomes 'sub'
+            if key == 'subject':
+                filename_parts.append(f"sub-{components[key]}")
+            # Handle special case for 'session' which becomes 'ses' 
+            elif key == 'session':
+                filename_parts.append(f"ses-{components[key]}")
+            else:
+                filename_parts.append(f"{key}-{components[key]}")
+    
+    # Join with underscores
+    return "_".join(filename_parts) 

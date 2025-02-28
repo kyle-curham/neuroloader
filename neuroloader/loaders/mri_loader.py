@@ -11,7 +11,7 @@ import numpy as np
 from urllib.parse import urljoin
 
 from .base_loader import BaseDataset
-from ..utils import find_files_by_extension, load_json_file, parse_bids_filename
+from ..utils import find_files_by_extension, load_json_file, parse_bids_filename, build_bids_filename
 from .. import logger
 
 # Use the package's centralized logger
@@ -120,18 +120,128 @@ class MRIDataset(BaseDataset):
         
         return description
     
-    def get_recording_files(self) -> List[Path]:
-        """Get a list of MRI recording files in the dataset.
+    def get_recording_files(self, subject_id: str = None, acquisition: str = None,
+                           task: str = None, run: str = None, return_paths: bool = True,
+                           file_type: str = 'nii.gz', include_fieldmaps: bool = False) -> List[Path]:
+        """Get a list of recording files for the given subject and optional filters."""
+        if subject_id and not self._is_valid_subject_id(subject_id):
+            mri_logger.warning(f"Invalid subject ID format: {subject_id}")
+            return []
+            
+        # Get path to subject directory
+        subject_dir = None
+        if subject_id:
+            subject_dir = self.dataset_dir / f"sub-{subject_id}"
+            if not subject_dir.exists():
+                mri_logger.error(f"Subject directory does not exist: {subject_dir}")
+                return []
+                
+        # Find MRI files
+        mri_dirs = []
+        if subject_dir:
+            # Look in the subject's MRI directory
+            sub_mri_dir = subject_dir / "anat"
+            sub_func_dir = subject_dir / "func"
+            sub_dwi_dir = subject_dir / "dwi"
+            if sub_mri_dir.exists():
+                mri_dirs.append(sub_mri_dir)
+            if sub_func_dir.exists():
+                mri_dirs.append(sub_func_dir)
+            if sub_dwi_dir.exists():
+                mri_dirs.append(sub_dwi_dir)
+            if include_fieldmaps:
+                sub_fmap_dir = subject_dir / "fmap"
+                if sub_fmap_dir.exists():
+                    mri_dirs.append(sub_fmap_dir)
+        else:
+            # Look in all subject directories
+            mri_logger.info(f"Looking for MRI recordings in all subjects")
+            subject_dirs = [d for d in self.dataset_dir.glob("sub-*") if d.is_dir()]
+            for sub_dir in subject_dirs:
+                sub_mri_dir = sub_dir / "anat"
+                sub_func_dir = sub_dir / "func"
+                sub_dwi_dir = sub_dir / "dwi"
+                if sub_mri_dir.exists():
+                    mri_dirs.append(sub_mri_dir)
+                if sub_func_dir.exists():
+                    mri_dirs.append(sub_func_dir)
+                if sub_dwi_dir.exists():
+                    mri_dirs.append(sub_dwi_dir)
+                if include_fieldmaps:
+                    sub_fmap_dir = sub_dir / "fmap"
+                    if sub_fmap_dir.exists():
+                        mri_dirs.append(sub_fmap_dir)
+                
+        # Find all MRI files
+        mri_files = []
+        for mri_dir in mri_dirs:
+            found_files = find_files_by_extension(mri_dir, file_type)
+            mri_files.extend(found_files)
+            
+        # Filter files based on task and run if provided
+        filtered_files = []
+        for file_path in mri_files:
+            # Use the filename directly for BIDS parsing
+            file_path_name = file_path.name
+            mri_logger.info(f"Checking file: {file_path_name}")
+            
+            parts = parse_bids_filename(file_path_name)
+            
+            if task and ('task' in parts and parts['task'] != task):
+                continue
+                
+            if run and ('run' in parts and parts['run'] != run):
+                continue
+                
+            if acquisition and ('acq' in parts and parts['acq'] != acquisition):
+                continue
+                
+            filtered_files.append(file_path)
+            
+        return filtered_files
+    
+    def get_subject_files(self, subject_id: str) -> List[Path]:
+        """Get all files for a specific subject, with emphasis on MRI files.
         
+        Args:
+            subject_id: Subject ID to get files for
+            
         Returns:
-            List[Path]: List of paths to MRI files
+            List[Path]: List of paths to files for the subject
         """
         # Check if the dataset is downloaded
         if not self.is_downloaded():
             mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
             return []
             
-        return find_files_by_extension(self.dataset_dir, self.mri_extensions)
+        # Combine MRI extensions with common metadata extensions
+        file_extensions = self.mri_extensions + ['.json', '.tsv', '.txt', '.bval', '.bvec']
+        
+        all_files = find_files_by_extension(self.dataset_dir, file_extensions)
+        
+        # Filter files by subject ID
+        subject_files = []
+        
+        for file_path in all_files:
+            # Check if subject ID is in the filename
+            if f'sub-{subject_id}' in file_path.name:
+                subject_files.append(file_path)
+                continue
+                
+            # Check if subject ID is in the directory path
+            if f'sub-{subject_id}' in str(file_path):
+                subject_files.append(file_path)
+                continue
+                
+            # Resolve potential DataLad/git-annex hashed filenames
+            _, resolved_filename = self.resolve_real_filename(file_path)
+            
+            # Parse BIDS filename with the resolved name
+            parts = parse_bids_filename(resolved_filename)
+            if parts.get('sub') == subject_id:
+                subject_files.append(file_path)
+        
+        return subject_files
     
     def get_structural_scans(self, scan_type: str = "T1w") -> List[Path]:
         """Get all structural MRI scans of a specific type.
@@ -180,42 +290,38 @@ class MRIDataset(BaseDataset):
             return None, None
         
         try:
+            # Use the filename directly for BIDS parsing
+            scan_file_name = scan_file.name
+            mri_logger.info(f"Using filename for processing: {scan_file_name}")
+            
             # Load the NIfTI file
             mri_logger.info(f"Loading scan from {scan_file}")
             img = nib.load(scan_file)
             
             # Try to find metadata file
             metadata = None
-            metadata_path = scan_file.with_suffix('.json')
+            parts = parse_bids_filename(scan_file_name)
             
-            if metadata_path.exists():
-                try:
-                    metadata = load_json_file(metadata_path)
-                    mri_logger.info(f"Loaded metadata from {metadata_path}")
-                except Exception as e:
-                    mri_logger.warning(f"Failed to load metadata: {str(e)}")
+            if 'modality' in parts:
+                json_filename = scan_file.with_suffix('.json')
+                if json_filename.exists():
+                    try:
+                        with open(json_filename, 'r') as f:
+                            metadata = json.load(f)
+                    except Exception as e:
+                        mri_logger.warning(f"Error loading metadata file {json_filename}: {e}")
+                else:
+                    mri_logger.info(f"No metadata file found for {scan_file}")
             
             return img, metadata
-            
         except Exception as e:
-            mri_logger.error(f"Failed to load scan: {str(e)}")
+            mri_logger.error(f"Error loading scan file {scan_file}: {e}")
             return None, None
     
     def get_events_dataframe(self, recording_file: Union[str, Path]) -> pd.DataFrame:
-        """Create a DataFrame containing events for the specified recording.
-        
-        This is mostly applicable to fMRI data, but implemented here for 
-        interface consistency.
-        
-        Args:
-            recording_file: Path to the recording file
-            
-        Returns:
-            pd.DataFrame: DataFrame with events information
-        """
-        # Check if the dataset is downloaded
-        if not self.is_downloaded():
-            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
+        """Load events data for a functional MRI recording."""
+        if not recording_file:
+            mri_logger.error("No recording file provided")
             return pd.DataFrame()
             
         recording_file = Path(recording_file)
@@ -224,34 +330,80 @@ class MRIDataset(BaseDataset):
             mri_logger.error(f"Recording file does not exist: {recording_file}")
             return pd.DataFrame()
         
-        # Try to find events file in the same directory
-        events_file = recording_file.with_name(recording_file.stem + '_events.tsv')
+        # Use the filename directly for BIDS parsing
+        recording_file_name = recording_file.name
+        mri_logger.info(f"Using filename for BIDS parsing: {recording_file_name}")
         
-        if not events_file.exists():
-            # Try to find other events files in the same directory
-            events_files = list(recording_file.parent.glob('*_events.tsv'))
-            if events_files:
-                events_file = events_files[0]
-            else:
-                mri_logger.warning(f"No events file found for {recording_file}")
-                return pd.DataFrame()
-        
+        # Method 1: Try BIDS naming convention (primary method)
         try:
-            # Load events from TSV file
-            events_df = pd.read_csv(events_file, sep='\t')
-            mri_logger.info(f"Loaded events from {events_file}")
-            return events_df
+            # Parse the recording filename to extract BIDS components
+            parts = parse_bids_filename(recording_file_name)
+            mri_logger.info(f"Parsed BIDS components: {parts}")
             
+            # Check if this is a functional MRI file
+            if 'modality' not in parts or parts['modality'] != 'bold':
+                mri_logger.warning(f"Not a functional MRI file: {recording_file}")
+                return pd.DataFrame()
+                
+            if 'subject' not in parts or 'task' not in parts:
+                mri_logger.warning(f"Missing required BIDS components in filename: {recording_file}")
+                return pd.DataFrame()
+            
+            # Construct events filename using BIDS convention
+            events_file_parts = {
+                'subject': parts['subject'],
+                'task': parts['task'],
+                'modality': 'events'
+            }
+            
+            # Include run number if present in the original file
+            if 'run' in parts:
+                events_file_parts['run'] = parts['run']
+                
+            events_filename = build_bids_filename(events_file_parts) + '.tsv'
+            events_file = recording_file.parent / events_filename
+            mri_logger.info(f"Looking for BIDS events file: {events_file}")
+            
+            if events_file.exists():
+                try:
+                    events_df = pd.read_csv(events_file, sep='\t')
+                    mri_logger.info(f"Loaded events from BIDS-formatted file: {events_file}")
+                    return events_df
+                except Exception as e:
+                    mri_logger.warning(f"Failed to load BIDS events file {events_file}: {e}")
+            else:
+                mri_logger.warning(f"BIDS events file not found: {events_file}")
         except Exception as e:
-            mri_logger.error(f"Failed to load events file: {str(e)}")
-            return pd.DataFrame()
+            mri_logger.warning(f"Failed to parse or find BIDS events file: {e}")
+            
+        # Fallback Method: Look for any events files in the same directory
+        mri_logger.info("Trying fallback methods to find events file")
+        recording_dir = recording_file.parent
+        
+        # Look for events files in the recording directory
+        events_patterns = ['*_events.tsv', '*events*.tsv']
+        for pattern in events_patterns:
+            event_files = list(recording_dir.glob(pattern))
+            if event_files:
+                try:
+                    events_file = event_files[0]
+                    mri_logger.info(f"Found fallback events file: {events_file}")
+                    events_df = pd.read_csv(events_file, sep='\t')
+                    mri_logger.info(f"Loaded events from fallback file: {events_file}")
+                    return events_df
+                except Exception as e:
+                    mri_logger.warning(f"Failed to load fallback events file {events_file}: {e}")
+                    
+        # No events files found
+        mri_logger.warning("No events file found for recording")
+        return pd.DataFrame()
 
 
 class FMRIDataset(MRIDataset):
     """Class for handling fMRI datasets from OpenNeuro.
     
-    This class extends MRIDataset with additional functionality specific to
-    functional MRI data.
+    This class extends MRIDataset to focus on functional MRI data,
+    adding functionality for task information, events, and BOLD signals.
     """
     
     def __init__(
@@ -269,11 +421,51 @@ class FMRIDataset(MRIDataset):
         """
         super().__init__(dataset_id, data_dir, version)
         
-        # Event file patterns specific to fMRI
-        self.event_file_patterns = [
-            '*_events.tsv', '*_bold.json'
+        # Additional patterns specific to fMRI
+        self.fmri_specific_patterns = [
+            '*bold.nii.gz', '*bold.nii', '*_cbv.nii.gz', '*_cbf.nii.gz'
         ]
-    
+        
+    def get_subject_files(self, subject_id: str) -> List[Path]:
+        """Get all files for a specific subject, with emphasis on fMRI files.
+        
+        This overrides the MRIDataset implementation to include fMRI-specific files.
+        
+        Args:
+            subject_id: Subject ID to get files for
+            
+        Returns:
+            List[Path]: List of paths to files for the subject
+        """
+        # Get basic MRI files from parent class implementation
+        subject_files = super().get_subject_files(subject_id)
+        
+        # Add fMRI-specific files
+        # These would be covered by the parent class implementation since the file extensions
+        # are the same (.nii, .nii.gz), but we'll search specifically for fMRI patterns
+        # to ensure we don't miss any
+        
+        # First, find all *bold* files
+        
+        for pattern in self.fmri_specific_patterns:
+            # Filter for this subject
+            subject_pattern = f"sub-{subject_id}*{pattern}"
+            fmri_files = list(self.dataset_dir.rglob(subject_pattern))
+            
+            # Add to subject files list
+            for file_path in fmri_files:
+                if file_path not in subject_files:
+                    subject_files.append(file_path)
+        
+        # Also look for event files associated with this subject
+        events_pattern = f"sub-{subject_id}*_events.tsv"
+        event_files = list(self.dataset_dir.rglob(events_pattern))
+        for file_path in event_files:
+            if file_path not in subject_files:
+                subject_files.append(file_path)
+        
+        return subject_files
+        
     def describe(self) -> Dict[str, Any]:
         """Get a detailed description of the fMRI dataset.
         
@@ -379,71 +571,6 @@ class FMRIDataset(MRIDataset):
         mri_logger.info(f"Found {len(functional_scans)} functional scans")
         return functional_scans
     
-    def get_events_dataframe(self, recording_file: Union[str, Path]) -> pd.DataFrame:
-        """Create a DataFrame containing events for the specified fMRI recording.
-        
-        This method overrides the base implementation with fMRI-specific event handling.
-        
-        Args:
-            recording_file: Path to the recording file
-            
-        Returns:
-            pd.DataFrame: DataFrame with events information
-        """
-        # Check if the dataset is downloaded
-        if not self.is_downloaded():
-            mri_logger.warning("Dataset not yet downloaded. Use download_dataset() first.")
-            return pd.DataFrame()
-            
-        recording_file = Path(recording_file)
-        
-        if not recording_file.exists():
-            mri_logger.error(f"Recording file does not exist: {recording_file}")
-            return pd.DataFrame()
-        
-        # Try to find events file based on BIDS naming convention
-        parts = parse_bids_filename(recording_file.name)
-        if 'sub' in parts and 'task' in parts:
-            # Construct events filename following BIDS convention
-            events_file_name = f"sub-{parts['sub']}_task-{parts['task']}_events.tsv"
-            events_file = recording_file.parent / events_file_name
-            
-            if not events_file.exists():
-                # Look for any events file in the directory
-                events_files = list(recording_file.parent.glob('*_events.tsv'))
-                if events_files:
-                    events_file = events_files[0]
-                else:
-                    mri_logger.warning(f"No events file found for {recording_file}")
-                    return pd.DataFrame()
-        else:
-            # Fallback to simple name-based matching
-            events_file = recording_file.with_name(recording_file.stem + '_events.tsv')
-            
-            if not events_file.exists():
-                events_files = list(recording_file.parent.glob('*_events.tsv'))
-                if events_files:
-                    events_file = events_files[0]
-                else:
-                    mri_logger.warning(f"No events file found for {recording_file}")
-                    return pd.DataFrame()
-        
-        try:
-            # Load events from TSV file
-            events_df = pd.read_csv(events_file, sep='\t')
-            
-            # Ensure required columns exist
-            if 'onset' not in events_df.columns:
-                mri_logger.warning(f"Events file {events_file} missing required 'onset' column")
-                return pd.DataFrame()
-                
-            mri_logger.info(f"Loaded events from {events_file} with {len(events_df)} events")
-            return events_df
-            
-        except Exception as e:
-            mri_logger.error(f"Failed to load events file: {str(e)}")
-            return pd.DataFrame()
-            
     def get_task_information(self, task_name: str) -> Optional[Dict]:
         """Get information about a specific task from the dataset.
         

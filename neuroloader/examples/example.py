@@ -46,6 +46,24 @@ def explore_eeg_dataset(dataset: EEGDataset) -> None:
     for i, file_path in enumerate(recording_files[:5]):
         eeg_logger.info(f"  {i+1}. {file_path}")
     
+    # Extract subject information
+    logger.log_step(eeg_logger, "Exploring subject information")
+    subject_ids = dataset_info.get('subjects', [])
+    eeg_logger.info(f"Found {len(subject_ids)} subjects: {subject_ids}")
+    
+    # For each subject, get their files
+    for subject_id in subject_ids[:3]:  # Limit to first 3 subjects to avoid too much output
+        subject_files = dataset.get_subject_files(subject_id)
+        eeg_logger.info(f"Subject {subject_id} has {len(subject_files)} files")
+        
+        # Filter for only EEG files
+        eeg_files = [f for f in subject_files if f.suffix in ['.set', '.edf', '.bdf', '.vhdr', '.cnt', '.eeg']]
+        eeg_logger.info(f"  Of which {len(eeg_files)} are EEG recordings")
+        
+        # Show the first recording for this subject
+        if eeg_files:
+            eeg_logger.info(f"  First recording: {eeg_files[0].name}")
+    
     # Check if there are any recordings
     if recording_files:
         # Get the first recording file for exploration
@@ -54,9 +72,10 @@ def explore_eeg_dataset(dataset: EEGDataset) -> None:
         
         # Get events for the example recording
         try:
-            eeg_logger.info("Extracting events information")
+            logger.log_step(eeg_logger, "Extracting events information")
             events_df = dataset.get_events_dataframe(example_file)
             eeg_logger.info(f"Found {len(events_df)} events")
+            
             if not events_df.empty:
                 eeg_logger.info(f"Events sample:\n{events_df.head()}")
                 
@@ -66,16 +85,56 @@ def explore_eeg_dataset(dataset: EEGDataset) -> None:
                     eeg_logger.info("Event Type Counts:")
                     for event_type, count in event_counts.items():
                         eeg_logger.info(f"  {event_type}: {count}")
+                elif 'value' in events_df.columns:
+                    event_counts = events_df['value'].value_counts()
+                    eeg_logger.info("Event Value Counts:")
+                    for event_type, count in event_counts.items():
+                        eeg_logger.info(f"  {event_type}: {count}")
+            else:
+                eeg_logger.warning("No events found in the recording. Trying alternative methods...")
+                
+                # Try to find events in other recordings
+                for alt_file in recording_files[1:3]:  # Try a few more files
+                    eeg_logger.info(f"Trying to extract events from alternative file: {alt_file.name}")
+                    alt_events_df = dataset.get_events_dataframe(alt_file)
+                    if not alt_events_df.empty:
+                        eeg_logger.info(f"Found {len(alt_events_df)} events in alternative file")
+                        eeg_logger.info(f"Events sample:\n{alt_events_df.head()}")
+                        break
         except Exception as e:
             logger.log_exception(eeg_logger, e, "Error reading events")
         
         # Try to get electrode locations
         try:
-            eeg_logger.info("Getting electrode locations")
+            logger.log_step(eeg_logger, "Extracting electrode information")
             electrodes_df = dataset.get_electrode_locations(example_file)
             if electrodes_df is not None:
                 eeg_logger.info(f"Found information for {len(electrodes_df)} channels")
                 eeg_logger.info(f"Electrode sample:\n{electrodes_df.head()}")
+                
+                # Check if coordinates are available
+                if all(col in electrodes_df.columns for col in ['x', 'y', 'z']):
+                    eeg_logger.info("3D electrode coordinates are available")
+                elif all(col in electrodes_df.columns for col in ['x', 'y']):
+                    eeg_logger.info("2D electrode coordinates are available")
+                
+                # Check for impedance information
+                if 'impedance' in electrodes_df.columns:
+                    impedances = electrodes_df['impedance'].dropna()
+                    if not impedances.empty:
+                        eeg_logger.info(f"Impedance information available for {len(impedances)} channels")
+                        eeg_logger.info(f"Average impedance: {impedances.mean():.2f} kOhm")
+            else:
+                eeg_logger.warning("No electrode location information found")
+                
+                # Try with another file
+                for alt_file in recording_files[1:3]:
+                    eeg_logger.info(f"Trying to extract electrode information from alternative file: {alt_file.name}")
+                    alt_electrodes_df = dataset.get_electrode_locations(alt_file)
+                    if alt_electrodes_df is not None:
+                        eeg_logger.info(f"Found information for {len(alt_electrodes_df)} channels in alternative file")
+                        eeg_logger.info(f"Electrode sample:\n{alt_electrodes_df.head()}")
+                        break
         except Exception as e:
             logger.log_exception(eeg_logger, e, "Error reading electrode information")
         
@@ -116,7 +175,7 @@ def main():
     print(f"  - Error log: {error_log_file}")
     
     # Start logging the app steps
-    logger.log_step(app_logger, "Preprocessed EEG Dataset Example")
+    logger.log_step(app_logger, "EEG Dataset Example")
     
     # Set up data directory
     data_dir = project_root / "data"
@@ -125,8 +184,9 @@ def main():
     
     # Initialize the dataset
     logger.log_step(app_logger, "Initializing dataset")
-    dataset_id = "ds004408"  # EEG dataset with preprocessed data
-    version = "1.0.0"        # Dataset version
+    # Use the new dataset with better BIDS compliance
+    dataset_id = "ds004448"  # SMR-BCI dataset with standard BIDS format
+    version = "1.0.1"        # Dataset version
     
     app_logger.info(f"Dataset ID: {dataset_id}, Version: {version}")
     
